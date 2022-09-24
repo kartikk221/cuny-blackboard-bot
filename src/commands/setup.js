@@ -15,6 +15,7 @@ export function build_setup_command(builder) {
 }
 
 /**
+ * Handles interactions for the  `/setup` slash command.
  *
  * @param {import('discord.js').Interaction} interaction
  * @returns {Promise<void>}
@@ -35,7 +36,7 @@ export async function on_setup_command(interaction) {
 
     // Return a success message
     return interaction.reply({
-        content: `Congratulations **${client.name}**, your Blackboard account will now be used for all other commands.`,
+        content: `Setup as **${client.name}**, your Blackboard account will now be used for all other commands.`,
         ephemeral: true,
     });
 }
