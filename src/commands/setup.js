@@ -25,7 +25,7 @@ export async function on_setup_command(interaction) {
     const indentifier = interaction.user.id;
     const cookies = interaction.options.getString('cookies');
 
-    // Register the client if we have valid cookies
+    // Register the client to determine if the cookies are valid
     const client = await register_client(indentifier, cookies);
     if (!client)
         return interaction.reply({

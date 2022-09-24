@@ -121,14 +121,14 @@ export class BlackboardClient {
     /**
      * @typedef {Object} Assignment
      * @property {String} id The ID of the assignment.
-     * @property {String} url The URL to the assignment.
+     * @property {String=} url The URL to the assignment.
      * @property {String} name The name of the assignment.
      * @property {Number} cursor The position cursor of the assignment.
      * @property {('GRADED'|'SUBMITTED'|'UPCOMING')} status The status constant of the assignment.
-     * @property {Object} grade The grade object of the assignment.
-     * @property {String} grade.score The student's score of the assignment.
-     * @property {String} grade.possible The maximum possible score of the assignment.
-     * @property {String} grade.percent The percentage score of the assignment.
+     * @property {Object=} grade The grade object of the assignment.
+     * @property {String=} grade.score The student's score of the assignment.
+     * @property {String=} grade.possible The maximum possible score of the assignment.
+     * @property {String=} grade.percent The percentage score of the assignment.
      * @property {Number} updated_at The last time the assignment was updated in milliseconds.
      * @property {Number} deadline_at The due date of the assignment in milliseconds.
      */
