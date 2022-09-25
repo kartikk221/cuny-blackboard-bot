@@ -1,4 +1,4 @@
-import { register_client } from '../blackboard.js';
+import { register_client } from '../blackboard/methods.js';
 
 /**
  * Builds and returns the `setup` command.
@@ -21,12 +21,11 @@ export function build_setup_command(builder) {
  * @returns {Promise<void>}
  */
 export async function on_setup_command(interaction) {
-    // Retrieve the user identifier and cookies from the interaction
-    const indentifier = interaction.user.id;
+    // Retrieve the cookies option from the interaction
     const cookies = interaction.options.getString('cookies');
 
     // Register the client to determine if the cookies are valid
-    const client = await register_client(indentifier, cookies);
+    const client = await register_client(interaction, cookies);
     if (!client)
         return interaction.reply({
             ephemeral: true,

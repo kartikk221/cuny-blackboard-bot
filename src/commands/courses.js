@@ -1,4 +1,6 @@
-import { RegisteredClients } from '../blackboard.js';
+import { RegisteredClients } from '../blackboard/blackboard.js';
+import { get_registered_client } from '../blackboard/methods.js';
+import { spread_fields_over_embeds } from '../utils.js';
 
 /**
  * Builds and returns the `courses` command.
@@ -26,12 +28,11 @@ export function build_courses_command(builder) {
  * @returns {Promise<void>}
  */
 export async function on_courses_command(interaction) {
-    // Retrieve the user identifier and cookies from the interaction
-    const indentifier = interaction.user.id;
+    // Retrieve the max age option from the interaction
     const max_age = interaction.options.getNumber('max_age') || 6;
 
     // Retrieve the Blackboard client from the database
-    const client = RegisteredClients.get(indentifier);
+    const client = get_registered_client(interaction);
     if (!client)
         return await interaction.reply({
             ephemeral: true,
@@ -42,17 +43,29 @@ export async function on_courses_command(interaction) {
     await interaction.deferReply({ ephemeral: true });
 
     // Retrieve the courses from Blackboard with the max age converted to milliseconds
-    const courses = await client.get_all_courses(1000 * 60 * 60 * 24 * 30 * max_age);
+    let courses;
+    try {
+        // Retrieve courses from Blackboard
+        courses = await client.get_all_courses(1000 * 60 * 60 * 24 * 30 * max_age);
+
+        // Ensure we have some courses
+        if (Object.keys(courses).length === 0) throw new Error('No courses found.');
+    } catch (error) {
+        return await interaction.followUp({
+            ephemeral: true,
+            content: `Failed to retrieve courses from Blackboard. Please try again later or run the setup command again if this issue persists.`,
+        });
+    }
 
     // Build the embed message
     const embed = {
         title: 'Blackboard Courses',
-        description: 'Below are the courses that you are enrolled in on Blackboard.',
+        description: 'Below are some of the courses that are available on your Blackboard account.',
         fields: Object.keys(courses).map((key) => {
             const { name, updated_at, urls } = courses[key];
 
             // Simplify the name of the course
-            const simplified = name.split?.('[')?.[0]?.trim?.() || name;
+            const simplified = name.split('[')[0].trim() || name;
 
             // Return a formatted field
             return {
@@ -67,5 +80,5 @@ export async function on_courses_command(interaction) {
     };
 
     // Reply to the interaction with the embed message
-    await interaction.followUp({ embeds: [embed], ephemeral: true });
+    await interaction.followUp({ embeds: spread_fields_over_embeds(embed), ephemeral: true });
 }

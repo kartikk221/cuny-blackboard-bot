@@ -53,3 +53,33 @@ export async function on_client_interaction(interaction) {
             });
     }
 }
+
+/**
+ * Sends a DM to the owner of the client with the given identifier.
+ *
+ * @param {Object} deliverables Deliverable Discord.js objects to resolve and send a DM to the caller.
+ * @param {import('discord.js').BaseClient} deliverables.client The Discord client to use to send the DM.
+ * @param {(String|import('discord.js').Guild)} deliverables.guild The Discord guild to use to send the DM.
+ * @param {(String|import('discord.js').GuildMember)} deliverables.member The Discord guild member to use to send the DM.
+ * @param {String} message The text message DM to send to the user.
+ * @returns {Promise<void>}
+ */
+export async function send_direct_message(deliverables, message) {
+    // Destructure various deliverables
+    const { client, guild, member } = deliverables;
+
+    // Throw if the client is not a Discord client is not provided
+    if (!client) throw new Error('A Discord client is required to send a DM.');
+
+    // Attempt to resolve the member if it is not provided
+    if (typeof member == 'string') {
+        // Attempt to resolve the guild if it is not provided
+        if (typeof guild == 'string') guild = await client.guilds.fetch(guild);
+
+        // Attempt to resolve the member
+        member = await guild.members.fetch(member);
+    }
+
+    // Send a DM to the user
+    await member.send(message);
+}
