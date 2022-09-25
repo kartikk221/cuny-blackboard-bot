@@ -1,36 +1,69 @@
-import { readFile, writeFile } from 'fs/promises';
 import * as cheero from 'cheerio';
-import { log } from './utils.js';
+import { EventEmitter } from 'events';
+import { readFile, writeFile } from 'fs/promises';
 
-// This map will store the unique clients for each user
+/**
+ * The cache map that stores all available registered Blackboard client instances.
+ * @type {Map<string, BlackboardClient>}
+ */
 export const RegisteredClients = new Map();
 
 // This class will act as an API client for each user
-export class BlackboardClient {
-    #base = 'https://bbhosted.cuny.edu/';
-    #cookies = null;
-    #user_name = null;
-    #user_agent = null;
+export class BlackboardClient extends EventEmitter {
+    #base = 'https://bbhosted.cuny.edu';
+    #user_agent =
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/105.0.0.0 Safari/537.36';
+    #client = {
+        name: null,
+        cookies: null,
+    };
 
-    constructor(cookies, user_agent) {
-        this.#cookies = cookies;
-        this.#user_agent =
-            user_agent ||
-            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/105.0.0.0 Safari/537.36';
+    /**
+     * @typedef {Object} Client
+     * @property {String=} name The name of the current authenticated user.
+     * @property {String} cookies The cookies to use for the current authenticated user.
+     */
+
+    constructor() {
+        // Initialize the EventEmitter class
+        super(...arguments);
     }
 
     /**
-     * Initializes the client by validating the cookies with Blackboard servers.
-     * You may use this method to `ping` Blackboard and ensure cookies don't expire.
-     * @returns {Promise<Boolean>}
+     * Ensures the current instance has authenticated client data with valid credentials.
+     * @private
      */
-    async initialize() {
+    _ensure_authenticated() {
+        // Ensure client has been authenticated
+        if (this.#client.name === null)
+            throw new Error(
+                'BlackboardClient: Client has not been imported/authenticated yet. Please call BlackboardClient.import({ cookies }) first.'
+            );
+    }
+
+    /**
+     * Sets the user agent to use for all requests.
+     * @param {String} user_agent
+     */
+    set_user_agent(user_agent) {
+        this.#user_agent = user_agent;
+    }
+
+    /**
+     * Imports or initiializes a new Blackboard client.
+     *
+     * @param {Client} client
+     */
+    async import(client) {
+        // Destructure the client object with default values
+        const { cookies } = client;
+
         // Make a fetch request to Blackboard base URL to get the raw HTML
         const response = await fetch(this.#base, {
             method: 'GET',
             headers: {
                 'user-agent': this.#user_agent,
-                cookie: this.#cookies,
+                cookie: cookies,
             },
         });
 
@@ -43,14 +76,32 @@ export class BlackboardClient {
         // Strip the nav link to only contain the user name
         $('#global-nav-link').children().remove();
 
-        // Attempt to safely cache the user name
-        // If this errors, the user is not logged in
+        // Attempt to safely parse the user name to validate the cookies session
+        let is_logged_in = false;
         try {
-            this.#user_name = $('#global-nav-link').text().trim();
-        } catch (error) {}
+            client.name = $('#global-nav-link').text().trim();
+            is_logged_in = client.name.length > 0;
+        } catch (error) {
+            // Silently ignore this likely means the cookies are invalid
+        }
+
+        // If the user is logged in, merge the provided client data with the current client data
+        if (is_logged_in) this.#client = Object.assign(this.#client, client);
 
         // Return a Boolean based on a valid user name was found
-        return this.#user_name !== null;
+        return is_logged_in;
+    }
+
+    /**
+     * Exports the current client to a JSON object.
+     * @returns {Client}
+     */
+    export() {
+        // Ensure client has been authenticated
+        this._ensure_authenticated();
+
+        // Return a shallow copy of the client
+        return Object.assign({}, this.#client);
     }
 
     /**
@@ -70,12 +121,15 @@ export class BlackboardClient {
      * @returns {Promise<Object<string, Course>>}
      */
     async get_all_courses(max_age = 1000 * 60 * 60 * 24 * 30 * 6) {
+        // Ensure client has been authenticated
+        this._ensure_authenticated();
+
         // Fetch the grades stream viewer POST URL
         const response = await fetch(`${this.#base}/webapps/streamViewer/streamViewer`, {
             method: 'POST',
             headers: {
                 'user-agent': this.#user_agent,
-                cookie: this.#cookies,
+                cookie: this.#client.cookies,
                 accept: 'text/javascript, text/html, application/xml, text/xml, */*',
                 'content-type': 'application/x-www-form-urlencoded; charset=UTF-8',
                 pragma: 'no-cache',
@@ -93,7 +147,7 @@ export class BlackboardClient {
             throw new Error('Invalid courses payload received from Blackboard.');
 
         // Iterate through each grade entry and match it to a course
-        const courses = {};
+        let courses = [];
         sv_streamEntries.forEach((grade) => {
             const { se_courseId, se_timestamp, se_rhs } = grade;
             const course = sx_courses.find((course) => course.id === se_courseId);
@@ -101,21 +155,30 @@ export class BlackboardClient {
                 const { name, homePageUrl } = course;
                 const updated_at = new Date(se_timestamp).getTime();
                 if (updated_at + max_age > Date.now()) {
-                    // Add the course to the cache
-                    courses[se_courseId] = {
+                    // Add the course to the cache with a easy to remember index based identifier
+                    // This will make it easier to reference the course later through commands
+                    courses.push({
+                        id: se_courseId,
                         name,
                         updated_at,
                         urls: {
                             grades: se_rhs,
                             class: homePageUrl,
                         },
-                    };
+                    });
                 }
             }
         });
 
+        // Sort the courses by the last updated time
+        courses = courses.sort((a, b) => b.updated_at - a.updated_at);
+
+        // Conver the courses into an object with the index as the #key
+        const object = {};
+        courses.forEach((course, index) => (object[`#${index + 1}`] = course));
+
         // Return the courses
-        return courses;
+        return object;
     }
 
     /**
@@ -141,12 +204,15 @@ export class BlackboardClient {
      * @returns {Promise<Array<Assignment>>}
      */
     async get_all_assignments(course) {
+        // Ensure client has been authenticated
+        this._ensure_authenticated();
+
         // Fetch the raw HTML for the course from the grades URL
         const response = await fetch(`${this.#base}${course.urls.grades}`, {
             method: 'GET',
             headers: {
                 'user-agent': this.#user_agent,
-                cookie: this.#cookies,
+                cookie: this.#client.cookies,
             },
         });
 
@@ -222,11 +288,19 @@ export class BlackboardClient {
     }
 
     /**
+     * Returns the base URL used for requests.
+     * @returns {String}
+     */
+    get base() {
+        return this.#base;
+    }
+
+    /**
      * Returns the user name of the current authenticated user.
      * @returns {String}
      */
     get name() {
-        return this.#user_name;
+        return this.#client.name;
     }
 
     /**
@@ -234,7 +308,15 @@ export class BlackboardClient {
      * @returns {String}
      */
     get cookies() {
-        return this.#cookies;
+        return this.#client.cookies;
+    }
+
+    /**
+     * Returns the user agent used for requests.
+     * @returns {String}
+     */
+    get user_agent() {
+        return this.#user_agent;
     }
 }
 
@@ -248,12 +330,12 @@ export class BlackboardClient {
  */
 export async function register_client(identifier, cookies, ping_interval = 1000 * 60 * 5) {
     // Create a new Blackboard client with the cookies
-    const client = new BlackboardClient(cookies);
+    const client = new BlackboardClient();
 
     // Initialize the client to validate the cookies
     let valid = false;
     try {
-        valid = await client.initialize();
+        valid = await client.import({ cookies });
     } catch (error) {}
 
     // Ensure the client is valid
@@ -272,7 +354,7 @@ export async function register_client(identifier, cookies, ping_interval = 1000 
         // Safely ping the server
         let success = false;
         try {
-            success = await client.initialize();
+            success = await client.import({ cookies });
         } catch (error) {}
 
         // If the ping failed, increment the failure count
@@ -305,7 +387,7 @@ export async function register_client(identifier, cookies, ping_interval = 1000 
 export async function store_clients() {
     // Convert Map to object of cookies by identifier
     const clients = {};
-    for (const [identifier, client] of RegisteredClients) clients[identifier] = client.cookies;
+    for (const [identifier, client] of RegisteredClients) clients[identifier] = client.export();
 
     // Store all registered clients to the filesystem
     await writeFile(process.env['CLIENTS_JSON'], JSON.stringify(clients, null, 2));
@@ -327,9 +409,22 @@ export async function recover_clients(safe = true) {
 
         // Parse the clients
         const clients = JSON.parse(raw);
+        const count = Object.keys(clients).length;
 
         // Register each client with the server
-        for (const identifier in clients) await register_client(identifier, clients[identifier]);
+        for (const identifier in clients) {
+            // Create a new client
+            const client = new BlackboardClient();
+
+            // Import the client JSON
+            const valid = await client.import(clients[identifier]);
+
+            // If the client is valid, register it
+            if (valid) RegisteredClients.set(identifier, client);
+        }
+
+        // If some clients were unable to be recovered, store the clients to the filesystem
+        if (count !== RegisteredClients.size) await store_clients();
 
         // Return the number of clients recovered
         return RegisteredClients.size;
