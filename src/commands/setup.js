@@ -24,17 +24,20 @@ export async function on_setup_command(interaction) {
     // Retrieve the cookies option from the interaction
     const cookies = interaction.options.getString('cookies');
 
+    // Defer the reply as Blackboard may take a while to respond
+    await interaction.deferReply({ ephemeral: true });
+
     // Register the client to determine if the cookies are valid
     const client = await register_client(interaction, cookies);
     if (!client)
-        return interaction.reply({
+        return interaction.followUp({
             ephemeral: true,
             content:
                 'The cookies you have provided are either invalid or expired. Please try again with valid cookies.',
         });
 
     // Return a success message
-    interaction.reply({
+    interaction.followUp({
         content: `Setup as **${client.name}**, your Blackboard account will now be used for all other commands.`,
         ephemeral: true,
     });

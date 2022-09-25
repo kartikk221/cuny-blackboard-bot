@@ -1,5 +1,9 @@
 import * as cheero from 'cheerio';
 import { EventEmitter } from 'events';
+import { with_retries } from '../utils.js';
+
+export const DEFAULT_USER_AGENT =
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/105.0.0.0 Safari/537.36';
 
 /**
  * The cache map that stores all available registered Blackboard client instances.
@@ -9,9 +13,9 @@ export const RegisteredClients = new Map();
 
 // This class will act as an API client for each user
 export class BlackboardClient extends EventEmitter {
+    #cache = {};
     #base = 'https://bbhosted.cuny.edu';
-    #user_agent =
-        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/105.0.0.0 Safari/537.36';
+    #user_agent = DEFAULT_USER_AGENT;
     #client = {
         name: null,
         cookies: null,
@@ -52,22 +56,31 @@ export class BlackboardClient extends EventEmitter {
      * Imports or initiializes a new Blackboard client.
      *
      * @param {Client} client
+     * @param {Number=} retries The number of times to retry the authentication process.
+     * @param {Number=} delay The delay in milliseconds between each retry.
+     * @returns {Promise<Boolean>}
      */
-    async import(client) {
+    async import(client, retries = 5, delay = 1000) {
         // Destructure the client object with default values
         const { cookies } = client;
 
-        // Make a fetch request to Blackboard base URL to get the raw HTML
-        const response = await fetch(this.#base, {
-            method: 'GET',
-            headers: {
-                'user-agent': this.#user_agent,
-                cookie: cookies,
-            },
-        });
+        // Parse the response as text HTML
+        const text = await with_retries(retries, delay, async () => {
+            // Make the fetch request to the Blackboard homepage
+            const response = await fetch(this.#base, {
+                method: 'GET',
+                headers: {
+                    'user-agent': this.#user_agent,
+                    cookie: cookies,
+                },
+            });
 
-        // Parse the text HTML into a cheerio object
-        const text = await response.text();
+            // Ensure the response status is 200
+            if (response.status !== 200) throw new Error('Invalid response status code.');
+
+            // Return the response
+            return await response.text();
+        });
 
         // Cache the cheerio HTML DOM object
         const $ = cheero.load(text);
@@ -99,7 +112,7 @@ export class BlackboardClient extends EventEmitter {
         // Ensure client has been authenticated
         this._ensure_authenticated();
 
-        // Return a shallow copy of the client
+        // Return a shallow copy of the client to allow for the caller to modify the object without affecting the internal client data
         return Object.assign({}, this.#client);
     }
 
@@ -117,28 +130,39 @@ export class BlackboardClient extends EventEmitter {
      * Note! This method caches the courses in the returned Map.
      * You may clear the cache by calling the `Map.clear()` method on the returned Map.
      * @param {Number=} max_age The maximum age of each of class in milliseconds. Defaults to `6 months` max age.
+     * @param {Number=} retries The number of times to retry the fetch process.
+     * @param {Number=} delay The delay in milliseconds between each retry.
      * @returns {Promise<Object<string, Course>>}
      */
-    async get_all_courses(max_age = 1000 * 60 * 60 * 24 * 30 * 6) {
+    async get_all_courses(max_age = 1000 * 60 * 60 * 24 * 30 * 6, retries = 5, delay = 1000) {
         // Ensure client has been authenticated
         this._ensure_authenticated();
 
-        // Fetch the grades stream viewer POST URL
-        const response = await fetch(`${this.#base}/webapps/streamViewer/streamViewer`, {
-            method: 'POST',
-            headers: {
-                'user-agent': this.#user_agent,
-                cookie: this.#client.cookies,
-                accept: 'text/javascript, text/html, application/xml, text/xml, */*',
-                'content-type': 'application/x-www-form-urlencoded; charset=UTF-8',
-                pragma: 'no-cache',
-                'cache-control': 'no-cache',
-            },
-            body: `cmd=loadStream&streamName=mygrades&providers=%7B%7D&forOverview=false`,
+        // Fetch the grades stream viewer POST URL as JSON data
+        const json = await with_retries(retries, delay, async () => {
+            // Make fetch request to the Blackboard API endpoint
+            const response = await fetch(`${this.#base}/webapps/streamViewer/streamViewer`, {
+                method: 'POST',
+                headers: {
+                    'user-agent': this.#user_agent,
+                    cookie: this.#client.cookies,
+                    accept: 'text/javascript, text/html, application/xml, text/xml, */*',
+                    'content-type': 'application/x-www-form-urlencoded; charset=UTF-8',
+                    pragma: 'no-cache',
+                    'cache-control': 'no-cache',
+                },
+                body: `cmd=loadStream&streamName=mygrades&providers=%7B%7D&forOverview=false`,
+            });
+
+            // Ensure the response status is 200
+            if (response.status !== 200) throw new Error('Invalid response status code.');
+
+            // Return the response
+            return await response.json();
         });
 
-        // Parse the response as JSON to retrieve the courses
-        const { sv_extras, sv_streamEntries } = await response.json();
+        // Destructure the JSON data into the courses array
+        const { sv_extras, sv_streamEntries } = json;
         const { sx_courses } = sv_extras;
 
         // Ensure both grade entries and courses are present
@@ -158,7 +182,7 @@ export class BlackboardClient extends EventEmitter {
                     // This will make it easier to reference the course later through commands
                     courses.push({
                         id: se_courseId,
-                        name,
+                        name: name.split('[')[0].trim() || name, // Simplify the course name by removing codes/identifiers
                         updated_at,
                         urls: {
                             grades: se_rhs,
@@ -175,6 +199,9 @@ export class BlackboardClient extends EventEmitter {
         // Conver the courses into an object with the index as the #key
         const object = {};
         courses.forEach((course, index) => (object[`#${index + 1}`] = course));
+
+        // Cache the courses
+        this.#cache['courses'] = object;
 
         // Return the courses
         return object;
@@ -200,23 +227,33 @@ export class BlackboardClient extends EventEmitter {
      * Note! You may use the `get_all_courses()` method to get all course IDs.
      *
      * @param {Course} course The course to get assignments for.
+     * @param {Number=} retries The number of times to retry the fetch process.
+     * @param {Number=} delay The delay in milliseconds between each retry.
      * @returns {Promise<Array<Assignment>>}
      */
-    async get_all_assignments(course) {
+    async get_all_assignments(course, retries = 5, delay = 1000) {
         // Ensure client has been authenticated
         this._ensure_authenticated();
 
         // Fetch the raw HTML for the course from the grades URL
-        const response = await fetch(`${this.#base}${course.urls.grades}`, {
-            method: 'GET',
-            headers: {
-                'user-agent': this.#user_agent,
-                cookie: this.#client.cookies,
-            },
+        const text = await with_retries(retries, delay, async () => {
+            // Make fetch request to the Blackboard API endpoint
+            const response = await fetch(`${this.#base}${course.urls.grades}`, {
+                method: 'GET',
+                headers: {
+                    'user-agent': this.#user_agent,
+                    cookie: this.#client.cookies,
+                },
+            });
+
+            // Ensure the response status is 200
+            if (response.status !== 200) throw new Error('Invalid response status code.');
+
+            // Return the response
+            return await response.text();
         });
 
         // Parse the text HTML into a cheerio object
-        const text = await response.text();
         const $ = cheero.load(text);
 
         // Retrieve the table of assignments
@@ -316,5 +353,13 @@ export class BlackboardClient extends EventEmitter {
      */
     get user_agent() {
         return this.#user_agent;
+    }
+
+    /**
+     * Returns the internal cache for various data.
+     * @returns {Object<string, any>}
+     */
+    get cache() {
+        return this.#cache;
     }
 }

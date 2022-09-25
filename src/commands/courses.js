@@ -1,4 +1,3 @@
-import { RegisteredClients } from '../blackboard/blackboard.js';
 import { get_registered_client } from '../blackboard/methods.js';
 import { spread_fields_over_embeds } from '../utils.js';
 
@@ -33,13 +32,9 @@ export async function on_courses_command(interaction) {
 
     // Retrieve the Blackboard client from the database
     const client = get_registered_client(interaction);
-    if (!client)
-        return await interaction.reply({
-            ephemeral: true,
-            content: `Your Blackboard account has not been setup for this command yet. Please run the \`${process.env['COMMAND_PREFIX']} setup\` command to resolve this issue.`,
-        });
+    if (!client) throw new Error('NO_CLIENT');
 
-    // Defer the reply to account for the time it takes to retrieve the courses
+    // Defer the reply as Blackboard may take a while to respond
     await interaction.deferReply({ ephemeral: true });
 
     // Retrieve the courses from Blackboard with the max age converted to milliseconds
@@ -63,18 +58,11 @@ export async function on_courses_command(interaction) {
         description: 'Below are some of the courses that are available on your Blackboard account.',
         fields: Object.keys(courses).map((key) => {
             const { name, updated_at, urls } = courses[key];
-
-            // Simplify the name of the course
-            const simplified = name.split('[')[0].trim() || name;
-
-            // Return a formatted field
             return {
                 name: `Course ${key}`,
-                value: `Name: \`${simplified}\`\nLast Updated <t:${Math.floor(
-                    updated_at / 1000
-                )}:R>\n**[[View Course]](${client.base}${urls.class})** - **[[View Grades]](${client.base}${
-                    urls.grades
-                })**`,
+                value: `Name: \`${name}\`\nLast Updated <t:${Math.floor(updated_at / 1000)}:R>\n**[[View Course]](${
+                    client.base
+                }${urls.class})** - **[[View Grades]](${client.base}${urls.grades})**`,
             };
         }),
     };

@@ -133,7 +133,7 @@ export async function store_clients() {
 /**
  * Recovers registered clients from the filesystem from last persist.
  *
- * @param {import('discord.js').BaseClient} bot The Discord bot client.
+ * @param {import('discord.js').Client} bot The Discord bot client.
  * @param {Boolean=} safe Whether to recover clients safely.
  * @returns {Promise<void|Number|Error>}
  */
@@ -164,14 +164,17 @@ export async function recover_clients(bot, safe = true) {
         } else {
             // Perform this safely since the DM to the user may fail for various reasons
             try {
+                // Retrieve the caller Discord guild and user identifiers
                 const { guild, user } = identifier_to_caller(identifier);
+
+                // Send a personal DM to the user with the guild name
                 await send_direct_message(
                     {
                         client: bot,
                         guild,
                         member: user,
                     },
-                    `Your Blackboard account cookies have expired. Please run the \`${process.env['COMMAND_PREFIX']} setup\` command to continue usage.`
+                    `Your Blackboard account cookies have **expired**.\nPlease run the \`${process.env['COMMAND_PREFIX']} setup\` command to continue usage.`
                 );
             } catch (error) {
                 if (!safe) throw error;

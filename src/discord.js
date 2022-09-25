@@ -3,6 +3,7 @@ import { SlashCommandBuilder, REST as RestClient, Routes as RestRoutes } from 'd
 // Import the slash commands and their handlers
 import { build_setup_command, on_setup_command } from './commands/setup.js';
 import { build_courses_command, on_courses_command } from './commands/courses.js';
+import { build_assignments_command, on_assignments_command } from './commands/assignments.js';
 
 /**
  * Registers all slash commands with the Discord client globally.
@@ -13,8 +14,10 @@ export async function register_slash_commands() {
     const master_command_json = new SlashCommandBuilder()
         .setName(process.env['COMMAND_PREFIX'].replace('/', ''))
         .setDescription('Easily manage the CUNY Blackboard Discord bot.')
+        .setDMPermission(false)
         .addSubcommand(build_setup_command)
         .addSubcommand(build_courses_command)
+        .addSubcommand(build_assignments_command)
         .toJSON();
 
     // Create a new Discord REST client to make API requests to Discord
@@ -39,18 +42,41 @@ export async function on_client_interaction(interaction) {
     // Ensure the command name matches the prefix
     if (interaction.commandName !== process.env['COMMAND_PREFIX'].replace('/', '')) return;
 
-    // Handle the sub-command based on the name
-    switch (interaction.options.getSubcommand()) {
-        case 'setup':
-            return await on_setup_command(interaction);
-        case 'courses':
-            return await on_courses_command(interaction);
-        default:
-            // If the sub-command is not recognized, return an error message
-            return interaction.reply({
-                content: `The command \`${interaction.commandName}\` is not supported by this bot.`,
-                ephemeral: true,
-            });
+    try {
+        // Handle the sub-command based on the name
+        switch (interaction.options.getSubcommand()) {
+            case 'setup':
+                return await on_setup_command(interaction);
+            case 'courses':
+                return await on_courses_command(interaction);
+            case 'assignments':
+                return await on_assignments_command(interaction);
+            default:
+                // If the sub-command is not recognized, return an error message
+                return interaction.reply({
+                    content: `The command \`${interaction.commandName}\` is not supported by this bot.`,
+                    ephemeral: true,
+                });
+        }
+    } catch (error) {
+        // Determine the respond method based on whether the interaction has been deferred
+        const respond = interaction.deferred ? interaction.followUp : interaction.reply;
+
+        // Determine if the error is a known error
+        switch (error.message) {
+            case 'NO_CLIENT':
+                return await respond({
+                    ephemeral: true,
+                    content: `Your Blackboard account has not been setup for this command yet. Please run the \`${process.env['COMMAND_PREFIX']} setup\` command to resolve this issue.`,
+                });
+            default:
+                // If the error is not known, log it to the console
+                console.error(error);
+                return await respond({
+                    ephemeral: true,
+                    content: `An unknown error occurred while handling this command. Please try again later or contact the bot developer if this issue persists.`,
+                });
+        }
     }
 }
 
@@ -66,7 +92,7 @@ export async function on_client_interaction(interaction) {
  */
 export async function send_direct_message(deliverables, message) {
     // Destructure various deliverables
-    const { client, guild, member } = deliverables;
+    let { client, guild, member } = deliverables;
 
     // Throw if the client is not a Discord client is not provided
     if (!client) throw new Error('A Discord client is required to send a DM.');

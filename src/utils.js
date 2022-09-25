@@ -13,6 +13,34 @@ export function log(category = 'SYSTEM', message) {
 }
 
 /**
+ * Performs an operation with retries on failure.
+ *
+ * @param {Number} amount
+ * @param {Number} delay
+ * @param {Function} operation
+ * @param {Function=} onError
+ * @returns {Promise}
+ */
+export async function with_retries(amount, delay, operation, onError) {
+    let result;
+    try {
+        const output = operation();
+        if (output instanceof Promise) result = await output;
+    } catch (error) {
+        if (onError) onError(error);
+        if (amount > 0) {
+            amount--;
+            await async_wait(delay);
+            return await with_retries(amount, delay, operation, onError);
+        } else {
+            throw error;
+        }
+    }
+
+    return result;
+}
+
+/**
  * Spreads fields from provided embed JSON over multiple embeds if the numer of fields exceeds the 25 field limit per embed.
  * @param {Object} embed_json
  * @returns {Object[]}
