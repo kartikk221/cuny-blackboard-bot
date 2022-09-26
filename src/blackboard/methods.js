@@ -73,7 +73,8 @@ export async function register_client(interaction, cookies) {
     client.on('persist', store_clients);
 
     // Bind an "expire" event handler to the client
-    client.once('expired', () =>
+    client.once('expired', async () => {
+        // Send a DM to the user to notify them that the client has expired
         send_direct_message(
             {
                 client: interaction.client,
@@ -81,8 +82,11 @@ export async function register_client(interaction, cookies) {
                 member: interaction.member || interaction.user.id,
             },
             `Your Blackboard account cookies have **expired**.\nPlease run the \`${process.env['COMMAND_PREFIX']} setup\` command to continue usage.`
-        )
-    );
+        );
+
+        // Update the clients json
+        await store_clients();
+    });
 
     // Store the new client
     RegisteredClients.set(identifier, client);
@@ -148,6 +152,9 @@ export async function recover_clients(bot, safe = true) {
                 },
                 `Your Blackboard account cookies have **expired**.\nPlease run the \`${process.env['COMMAND_PREFIX']} setup\` command to continue usage.`
             );
+
+            // Update the clients json
+            await store_clients();
         });
 
         // Import the client JSON

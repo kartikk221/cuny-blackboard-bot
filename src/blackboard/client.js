@@ -108,6 +108,7 @@ export class BlackboardClient extends EventEmitter {
                 if (this.#keep_alive) clearInterval(this.#keep_alive);
 
                 // Start a new keep alive interval
+                let failures = 0;
                 this.#keep_alive = setInterval(async () => {
                     // Perform an import with just the cookies to keep the session alive
                     let alive = false;
@@ -117,8 +118,14 @@ export class BlackboardClient extends EventEmitter {
 
                     // Expire the cookies and emit 'expired' event if the session is no longer alive
                     if (!alive) {
-                        this.#client.cookies = null;
-                        this.emit('expired');
+                        // Increment the failure count
+                        failures++;
+
+                        // Expire the client if the failure count is greater than 5 failures
+                        if (failures > 5) {
+                            this.#client.cookies = null;
+                            this.emit('expired');
+                        }
                     }
                 }, 1000 * 60 * 5); // Keep Alive every 5 minutes
             } else {
