@@ -76,7 +76,9 @@ export async function on_assignments_command(interaction) {
                   value: [
                       `Status: \`${status}\``,
                       grade ? `Grade: \`${grade.score} / ${grade.possible} - ${grade.percent}%\`` : '',
-                      `Due Date: <t:${Math.floor(deadline_at / 1000)}:R>`,
+                      `Due Date: <t:${Math.floor(deadline_at / 1000)}:R> ${
+                          status === 'UPCOMING' && deadline_at < Date.now() ? ' **(Past Due)**' : ''
+                      }`,
                       grade && grade.comments ? `Comments:\n> ${grade.comments.split('\n').join('\n> ')}` : '',
                       url ? `**[[View Assignment]](${client.base}${url})**` : '',
                   ]

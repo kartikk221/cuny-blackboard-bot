@@ -66,7 +66,7 @@ export async function on_courses_command(interaction) {
     };
 
     // Reply to the interaction with the embed message
-    await interaction[interaction.deferred ? 'followUp' : 'reply']({
+    await interaction.safe_reply({
         embeds: spread_fields_over_embeds(embed),
         ephemeral: true,
     });

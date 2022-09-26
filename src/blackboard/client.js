@@ -27,6 +27,7 @@ export class BlackboardClient extends EventEmitter {
      * @typedef {Object} Client
      * @property {String=} name The name of the current authenticated user.
      * @property {String} cookies The cookies to use for the current authenticated user.
+     * @property {Object<string,any>} cache Cached data for the current authenticated user.
      */
     constructor() {
         // Initialize the EventEmitter class
@@ -38,11 +39,9 @@ export class BlackboardClient extends EventEmitter {
      * @private
      */
     _ensure_authenticated() {
-        // Ensure client has been authenticated
-        if (this.#client.name === null)
-            throw new Error(
-                'BlackboardClient: Client has not been imported/authenticated yet. Please call BlackboardClient.import({ cookies }) first.'
-            );
+        // Ensure client has valid cookies for authentication
+        // Throw the catch-all no client error to alert the user of invalid cookies
+        if (this.#client.cookies === null) throw new Error('NO_CLIENT');
     }
 
     /**
@@ -62,8 +61,8 @@ export class BlackboardClient extends EventEmitter {
      * @returns {Promise<Boolean>}
      */
     async import(client, retries = 5, delay = 1000) {
-        // Destructure the client object with default values
-        const { cookies } = client;
+        // Create a shallow copy of the client object to prevent mutation of the original object
+        client = Object.assign({}, client);
 
         // Parse the response as text HTML
         const text = await with_retries(retries, delay, async () => {
@@ -72,7 +71,7 @@ export class BlackboardClient extends EventEmitter {
                 method: 'GET',
                 headers: {
                     'user-agent': this.#user_agent,
-                    cookie: cookies,
+                    cookie: client.cookies,
                 },
             });
 
@@ -99,24 +98,33 @@ export class BlackboardClient extends EventEmitter {
         }
 
         // Ensure the user is logged in and this is not a ping import
-        if (is_logged_in && client.ping !== true) {
+        if (client.ping !== true) {
             // Merge the client data with the internal client data
             this.#client = Object.assign(this.#client, client);
 
-            // Clear the old keep alive interval
-            if (this.#keep_alive) clearInterval(this.#keep_alive);
+            // Perform keep-alive if the client is logged in
+            if (is_logged_in) {
+                // Clear the old keep alive interval if it exists
+                if (this.#keep_alive) clearInterval(this.#keep_alive);
 
-            // Start a new keep alive interval
-            this.#keep_alive = setInterval(async () => {
-                // Perform an import with just the cookies to keep the session alive
-                let alive = false;
-                try {
-                    alive = await this.import({ cookies, ping: true });
-                } catch (error) {}
+                // Start a new keep alive interval
+                this.#keep_alive = setInterval(async () => {
+                    // Perform an import with just the cookies to keep the session alive
+                    let alive = false;
+                    try {
+                        alive = await this.import({ cookies, ping: true });
+                    } catch (error) {}
 
-                // Emit an expire event to notify the caller that the session has expired
-                if (!alive) this.emit('expire');
-            }, 1000 * 60 * 5); // Keep Alive every 5 minutes
+                    // Expire the cookies and emit 'expired' event if the session is no longer alive
+                    if (!alive) {
+                        this.#client.cookies = null;
+                        this.emit('expired');
+                    }
+                }, 1000 * 60 * 5); // Keep Alive every 5 minutes
+            } else {
+                // Clear the cookies value if the user is not logged in
+                this.#client.cookies = null;
+            }
         }
 
         // Return a Boolean based on a valid user name was found
@@ -128,9 +136,6 @@ export class BlackboardClient extends EventEmitter {
      * @returns {Client}
      */
     export() {
-        // Ensure client has been authenticated
-        this._ensure_authenticated();
-
         // Return a shallow copy of the client to allow for the caller to modify the object without affecting the internal client data
         return Object.assign({}, this.#client);
     }
@@ -209,15 +214,19 @@ export class BlackboardClient extends EventEmitter {
                 if (course) {
                     // Store the course object among the courses
                     const { name, homePageUrl } = course;
-                    courses.push({
-                        id: se_courseId,
-                        name: name.split('[')[0].trim() || name, // Simplify the course name by removing codes/identifiers
-                        updated_at: new Date(se_timestamp).getTime(),
-                        urls: {
-                            grades: se_rhs,
-                            class: homePageUrl,
-                        },
-                    });
+                    const updated_at = new Date(se_timestamp).getTime();
+
+                    // Ensure the course has a valid updated_at timestamp
+                    if (updated_at > 0)
+                        courses.push({
+                            id: se_courseId,
+                            name: name.split('[')[0].trim() || name, // Simplify the course name by removing codes/identifiers
+                            updated_at: new Date(se_timestamp).getTime(),
+                            urls: {
+                                grades: se_rhs,
+                                class: homePageUrl,
+                            },
+                        });
                 }
             });
 

@@ -50,8 +50,8 @@ export async function register_client(interaction, cookies) {
     // Convert the interaction into an identifier
     const identifier = interaction_to_identifier(interaction);
 
-    // Create a new Blackboard client with the cookies
-    const client = new BlackboardClient();
+    // Re-use an existing client if one exists or create a new one
+    const client = get_registered_client(interaction) || new BlackboardClient();
 
     // Initialize the client to validate the cookies
     let valid = false;
@@ -73,23 +73,16 @@ export async function register_client(interaction, cookies) {
     client.on('persist', store_clients);
 
     // Bind an "expire" event handler to the client
-    client.once('expire', async () => {
-        // Send a personal DM to the user
-        await send_direct_message(
+    client.once('expired', () =>
+        send_direct_message(
             {
                 client: interaction.client,
                 guild: interaction.guild || interaction.guildId,
                 member: interaction.member || interaction.user.id,
             },
             `Your Blackboard account cookies have **expired**.\nPlease run the \`${process.env['COMMAND_PREFIX']} setup\` command to continue usage.`
-        );
-
-        // Remove the client from the registry
-        RegisteredClients.delete(identifier);
-
-        // Update the clients in the file system
-        await store_clients();
-    });
+        )
+    );
 
     // Store the new client
     RegisteredClients.set(identifier, client);
@@ -131,9 +124,9 @@ export async function recover_clients(bot, safe = true) {
 
     // Parse the clients
     const clients = JSON.parse(raw);
-    const count = Object.keys(clients).length;
 
     // Register each client with the server
+    let requires_update = false;
     for (const identifier in clients) {
         // Create a new client
         const client = new BlackboardClient();
@@ -142,7 +135,7 @@ export async function recover_clients(bot, safe = true) {
         client.on('persist', store_clients);
 
         // Bind an expire event handler to the client
-        client.once('expire', async () => {
+        client.once('expired', async () => {
             // Retrieve the caller Discord guild and user identifiers
             const { guild, user } = identifier_to_caller(identifier);
 
@@ -155,12 +148,6 @@ export async function recover_clients(bot, safe = true) {
                 },
                 `Your Blackboard account cookies have **expired**.\nPlease run the \`${process.env['COMMAND_PREFIX']} setup\` command to continue usage.`
             );
-
-            // Remove the client from the registry
-            RegisteredClients.delete(identifier);
-
-            // Update the clients in the file system
-            await store_clients();
         });
 
         // Import the client JSON
@@ -171,18 +158,21 @@ export async function recover_clients(bot, safe = true) {
             if (!safe) throw error;
         }
 
-        // Determine if the client credentials are valid
-        if (valid) {
-            // Store the client in the registry
-            RegisteredClients.set(identifier, client);
-        } else {
-            // Emit the expire event to alert the user of expired credentials
-            client.emit('expire');
+        // Determine if the client is no longer valid valid
+        if (!valid) {
+            // Emit the "expired" event to send a DM to the user
+            client.emit('expired');
+
+            // Mark the clients as requiring an update
+            requires_update = true;
         }
+
+        // Store the client in the registry
+        RegisteredClients.set(identifier, client);
     }
 
-    // If we have a difference of laded and recovered clients, store the clients to expire the old ones
-    if (count !== RegisteredClients.size) await store_clients();
+    // Store the clients to the file system
+    if (requires_update) await store_clients();
 
     // Return the number of clients that were successfully recovered
     return RegisteredClients.size;
