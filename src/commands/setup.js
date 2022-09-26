@@ -8,16 +8,21 @@ import { register_client } from '../blackboard/methods.js';
 export function build_setup_command(builder) {
     return builder
         .setName('setup')
-        .setDescription('Setup your Blackboard account with the bot using cookies.')
+        .setDescription('Setup your Blackboard account with the bot using session cookies.')
         .addStringOption((option) =>
-            option.setName('cookies').setDescription('Enter your blackboard cookies here.').setRequired(true)
+            option
+                .setName('cookies')
+                .setDescription(
+                    'Enter your blackboard session cookies in key value format. (Example: key1=value1; key2=value2...)'
+                )
+                .setRequired(true)
         );
 }
 
 /**
  * Handles interactions for the  `setup` command.
  *
- * @param {import('discord.js').Interaction} interaction
+ * @param {import('discord.js').ChatInputCommandInteraction} interaction
  * @returns {Promise<void>}
  */
 export async function on_setup_command(interaction) {

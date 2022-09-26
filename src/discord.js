@@ -1,3 +1,4 @@
+import fetch from 'node-fetch';
 import { SlashCommandBuilder, REST as RestClient, Routes as RestRoutes } from 'discord.js';
 
 // Import the slash commands and their handlers
@@ -5,6 +6,7 @@ import { build_setup_command, on_setup_command } from './commands/setup.js';
 import { build_courses_command, on_courses_command } from './commands/courses.js';
 import { build_assignments_command, on_assignments_command } from './commands/assignments.js';
 import { build_summary_command, on_summary_command } from './commands/summary.js';
+import { build_alerts_command, on_alerts_command } from './commands/alerts.js';
 
 /**
  * Registers all slash commands with the Discord client globally.
@@ -20,12 +22,13 @@ export async function register_slash_commands() {
         .addSubcommand(build_courses_command)
         .addSubcommand(build_assignments_command)
         .addSubcommand(build_summary_command)
+        .addSubcommand(build_alerts_command)
         .toJSON();
 
     // Create a new Discord REST client to make API requests to Discord
     const client = new RestClient({ version: '10' }).setToken(process.env['DISCORD_BOT_TOKEN']);
 
-    // Register all slash commands with Discord
+    // Register the master slash command with Discord API
     await client.put(RestRoutes.applicationCommands(process.env['DISCORD_APPLICATION_ID']), {
         body: [master_command_json],
     });
@@ -34,7 +37,7 @@ export async function register_slash_commands() {
 /**
  * Handles an interactionCreate event from the Discord client.
  *
- * @param {import('discord.js').Interaction} interaction
+ * @param {import('discord.js').ChatInputCommandInteraction} interaction
  * @returns {Promise<void>}
  */
 export async function on_client_interaction(interaction) {
@@ -84,6 +87,8 @@ export async function on_client_interaction(interaction) {
                 return await on_assignments_command(interaction);
             case 'summary':
                 return await on_summary_command(interaction);
+            case 'alerts':
+                return await on_alerts_command(interaction);
             default:
                 // If the sub-command is not recognized, return an error message
                 return interaction.safe_reply({

@@ -5,7 +5,7 @@ import { BlackboardClient, RegisteredClients } from './client.js';
 /**
  * Returns a unique caller identifier for the given Discord interaction.
  *
- * @param {import('discord.js').Interaction} interaction
+ * @param {import('discord.js').ChatInputCommandInteraction} interaction
  * @returns {String}
  */
 function interaction_to_identifier(interaction) {
@@ -32,7 +32,7 @@ function identifier_to_caller(identifier) {
 /**
  * Resolves and returns a Blackboard client for the given Discord interaction.
  *
- * @param {import('discord.js').Interaction} interaction
+ * @param {import('discord.js').ChatInputCommandInteraction} interaction
  * @returns {BlackboardClient=}
  */
 export function get_registered_client(interaction) {
@@ -71,6 +71,20 @@ export async function register_client(interaction, cookies) {
 
     // Bind a "persist" event handler to store the clients when data is updated
     client.on('persist', store_clients);
+
+    // Bind a "dispatch" event handler to dispatch messages to the user
+    client.on('dispatch', async (guild_id, channel_id, content, embeds) => {
+        // Retrieve the guild from the interaction client
+        const guild = await interaction.client.guilds.fetch(guild_id);
+        if (!guild) return;
+
+        // Retrieve the channel from the guild
+        const channel = guild.channels.cache.get(channel_id);
+        if (!channel) return;
+
+        // Send the content and embeds to the channel
+        return await channel.send({ content: content ? `<@${interaction.user.id}> ${content}` : undefined, embeds });
+    });
 
     // Bind an "expire" event handler to the client
     client.once('expired', async () => {
@@ -135,8 +149,28 @@ export async function recover_clients(bot, safe = true) {
         // Create a new client
         const client = new BlackboardClient();
 
+        // Store the client in the registry
+        RegisteredClients.set(identifier, client);
+
         // Bind a "persist" event handler to store the clients when data is updated
         client.on('persist', store_clients);
+
+        // Bind a "dispatch" event handler to dispatch messages to the user
+        client.on('dispatch', async (guild_id, channel_id, content, embeds) => {
+            // Retrieve the guild from the interaction client
+            const guild = await bot.guilds.fetch(guild_id);
+            if (!guild) return;
+
+            // Retrieve the channel from the guild
+            const channel = await guild.channels.fetch(channel_id);
+            if (!channel) return;
+
+            // Retrieve the caller from the identifier
+            const { user } = identifier_to_caller(identifier);
+
+            // Send the embeds to the channel
+            return await channel.send({ content: content ? `<@${user}> ${content}` : undefined, embeds });
+        });
 
         // Bind an expire event handler to the client
         client.once('expired', async () => {
@@ -170,12 +204,12 @@ export async function recover_clients(bot, safe = true) {
             // Emit the "expired" event to send a DM to the user
             client.emit('expired');
 
+            // Remove the client from the registry
+            RegisteredClients.delete(identifier);
+
             // Mark the clients as requiring an update
             requires_update = true;
         }
-
-        // Store the client in the registry
-        RegisteredClients.set(identifier, client);
     }
 
     // Store the clients to the file system

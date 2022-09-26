@@ -13,7 +13,9 @@ export function build_courses_command(builder) {
         .addNumberOption((option) =>
             option
                 .setName('max_age')
-                .setDescription('Maximum age in "number of months" to filter out past courses')
+                .setDescription(
+                    'Maximum age in "number of months" to filter out past courses. (Default: 6 aka. 6 Months)'
+                )
                 .setMinValue(1)
                 .setMaxValue(48)
                 .setRequired(false)
@@ -23,7 +25,7 @@ export function build_courses_command(builder) {
 /**
  * Handles interactions for the `courses` command.
  *
- * @param {import('discord.js').Interaction} interaction
+ * @param {import('discord.js').ChatInputCommandInteraction} interaction
  * @returns {Promise<void>}
  */
 export async function on_courses_command(interaction) {

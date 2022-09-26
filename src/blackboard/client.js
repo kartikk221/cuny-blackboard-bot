@@ -1,7 +1,11 @@
+import fetch from 'node-fetch';
+import * as whenTime from 'when-time';
 import * as cheero from 'cheerio';
 import { EventEmitter } from 'events';
 import { sleep, with_retries } from '../utils.js';
+import { generate_summary_embeds } from '../commands/summary.js';
 
+export const MAX_KEEP_ALIVE_RETRIES = 5;
 export const BLACKBOARD_URL_BASE = 'https://bbhosted.cuny.edu';
 export const DEFAULT_USER_AGENT =
     'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/105.0.0.0 Safari/537.36';
@@ -17,9 +21,11 @@ export class BlackboardClient extends EventEmitter {
     #keep_alive;
     #base = BLACKBOARD_URL_BASE;
     #user_agent = DEFAULT_USER_AGENT;
+    #schedules = new Map();
     #client = {
         name: null,
         cookies: null,
+        alerts: {},
         cache: {},
     };
 
@@ -64,6 +70,13 @@ export class BlackboardClient extends EventEmitter {
         // Create a shallow copy of the client object to prevent mutation of the original object
         client = Object.assign({}, client);
 
+        // Convert the cookies into a jar object
+        const jar = {};
+        client.cookies.split(';').forEach((cookie) => {
+            const [key, value] = cookie.split('=');
+            jar[key.trim()] = value.trim();
+        });
+
         // Parse the response as text HTML
         const text = await with_retries(retries, delay, async () => {
             // Make the fetch request to the Blackboard homepage
@@ -78,32 +91,55 @@ export class BlackboardClient extends EventEmitter {
             // Ensure the response status is 200
             if (response.status !== 200) throw new Error('Invalid response status code.');
 
+            // Retrieve the set-cookie header
+            const set_cookie = response.headers.get('set-cookie');
+            if (set_cookie)
+                set_cookie.split(', ').forEach((raw) => {
+                    const cookie = raw.split('; ')[0];
+                    const [key, value] = cookie.split('=');
+                    jar[key.trim()] = value.trim();
+                });
+
             // Return the response
             return await response.text();
         });
 
-        // Cache the cheerio HTML DOM object
-        const $ = cheero.load(text);
-
-        // Strip the nav link to only contain the user name
-        $('#global-nav-link').children().remove();
-
         // Attempt to safely parse the user name to validate the cookies session
         let is_logged_in = false;
         try {
+            // Cache the cheerio HTML DOM object
+            const $ = cheero.load(text);
+
+            // Strip the nav link to only contain the user name
+            $('#global-nav-link').children().remove();
+
+            // Parse the user name
             client.name = $('#global-nav-link').text().trim();
+
+            // Determine if the session is valid based on a valid client name
             is_logged_in = client.name.length > 0;
         } catch (error) {
-            // Silently ignore this likely means the cookies are invalid
+            console.error(error);
         }
 
-        // Ensure the user is logged in and this is not a ping import
-        if (client.ping !== true) {
+        // Ensure this is not a ping import
+        if (!client.ping) {
             // Merge the client data with the internal client data
             this.#client = Object.assign(this.#client, client);
 
             // Perform keep-alive if the client is logged in
             if (is_logged_in) {
+                // Re-schedule all alerts to account for the new imported alerts
+                this._reschedule_alerts();
+
+                // Update the cookies with the new jar
+                this.#client.cookies = Object.keys(jar)
+                    .map((key) => `${key}=${jar[key]}`)
+                    .join('; ');
+
+                // Emit a 'persist' event if the cookies have changed
+                if (client.cookies !== this.#client.cookies) this.emit('persist');
+
                 // Clear the old keep alive interval if it exists
                 if (this.#keep_alive) clearInterval(this.#keep_alive);
 
@@ -113,7 +149,7 @@ export class BlackboardClient extends EventEmitter {
                     // Perform an import with just the cookies to keep the session alive
                     let alive = false;
                     try {
-                        alive = await this.import({ cookies, ping: true });
+                        alive = await this.import({ cookies: this.#client.cookies, ping: true });
                     } catch (error) {}
 
                     // Expire the cookies and emit 'expired' event if the session is no longer alive
@@ -121,8 +157,8 @@ export class BlackboardClient extends EventEmitter {
                         // Increment the failure count
                         failures++;
 
-                        // Expire the client if the failure count is greater than 5 failures
-                        if (failures > 5) {
+                        // Expire the client if the failure count is greater than the max retries
+                        if (failures >= MAX_KEEP_ALIVE_RETRIES) {
                             this.#client.cookies = null;
                             this.emit('expired');
                         }
@@ -397,6 +433,125 @@ export class BlackboardClient extends EventEmitter {
     }
 
     /**
+     * @typedef {Object} SummaryAlert
+     * @property {String} summary The summary type of the alert.
+     * @property {String} guild The Discord guild ID of the alert.
+     * @property {String} channel The Discord channel ID associated with the alert.
+     * @property {('DAILY'|'WEEKLY')} interval The interval in milliseconds to dispatch alerts repeatedly.
+     * @property {Number} hour_of_day The hour of the day to dispatch alerts at repeatedly (24 Hour Format).
+     * @property {Number} max_courses_age The maximum age in "number of months" to filter out courses for the alert.
+     */
+
+    /**
+     * Creates or updates a summary alert.
+     *
+     * @param {SummaryAlert} alert The alert to create.
+     * @returns {Boolean} Returns `true` if the alert was created or `false` if the alert was updated.
+     */
+    deploy_alert(alert) {
+        // Determine a unique identifier for this alert based on the channel/summary combination
+        const identifier = `${alert.channel}:${alert.summary}`;
+
+        // Determine if the alert will be created
+        const created = this.#client.alerts[identifier] === undefined;
+
+        // Set the alert in the alerts object
+        this.#client.alerts[identifier] = alert;
+
+        // Re-schedule all alerts to ensure they are up to date
+        this._reschedule_alerts();
+
+        // Emit the "persist" event to persist the alerts object to disk
+        this.emit('persist');
+
+        // Return whether or not the alert already existed
+        return created;
+    }
+
+    /**
+     * Deletes an alert if it exists.
+     *
+     * @param {String} channel The Discord channel ID associated with the alert.
+     * @param {String} summary The summary type of the alert.
+     * @returns {Boolean} Whether or not a alert was deleted.
+     */
+    delete_alert(channel, summary) {
+        // Determine a unique identifier for this alert based on the channel/summary combination
+        const identifier = `${channel}:${summary}`;
+
+        // Determine if the alert exists
+        const exists = this.#client.alerts[identifier] !== undefined;
+
+        // Delete the alert from the alerts object
+        delete this.#client.alerts[identifier];
+
+        // Re-schedule all alerts to ensure they are up to date
+        this._reschedule_alerts();
+
+        // Emit the "persist" event to persist the alerts object to disk
+        if (exists) this.emit('persist');
+
+        // Return whether or not the alert existed
+        return exists;
+    }
+
+    /**
+     * Purges old schedules and re-schedules all alerts to be dispatched.
+     * @private
+     */
+    _reschedule_alerts() {
+        // Destroy all existing schedules
+        this.#schedules.forEach((schedule) => schedule.cancel());
+
+        // Clear the schedules map to release old schedules
+        this.#schedules.clear();
+
+        // Iterate over all alerts and schedule them to be dispatched
+        const alerts = this.#client.alerts;
+        for (const identifier in alerts) {
+            // Retrieve the alert
+            const alert = alerts[identifier];
+
+            // Determine a repetition interval string for the alert
+            let every;
+            switch (alert.interval) {
+                case 'DAILY':
+                    every = '1 Day';
+                    break;
+                case 'WEEKLY':
+                    every = '1 Week';
+                    break;
+            }
+
+            // Schedule a time task to dispatch the alert
+            const schedule = whenTime
+                .isEqualTo(`${alert.hour_of_day}:00`)
+                .do(async () => {
+                    // Retrieve a summary embed for the alert
+                    const embeds = await generate_summary_embeds(
+                        this,
+                        alert.summary,
+                        1000 * 60 * 60 * 24 * 30 * alert.max_courses_age
+                    );
+
+                    // Determine if the summary embed has at least one field aka. assignments
+                    const description = embeds[0]?.description;
+                    const first_embed_fields = embeds[0]?.fields || [];
+                    if (first_embed_fields.length) {
+                        // Dispatch an event with the destination guild, channel and summary embed
+                        this.emit('dispatch', alert.guild, alert.channel, description, embeds);
+                    }
+                })
+                .repeat(Infinity)
+                .every(every)
+                .inTimezone('America/New_York');
+
+            // Add the schedule to the schedules map
+            this.#schedules.set(identifier, schedule);
+        }
+    }
+
+    /**
      * Destroys this client and clears all cookies.
      */
     destroy() {
@@ -437,5 +592,14 @@ export class BlackboardClient extends EventEmitter {
      */
     get user_agent() {
         return this.#user_agent;
+    }
+
+    /**
+     * Returns the current alerts for the authenticated user.
+     * @returns {Object<string, SummaryAlert>}
+     */
+    get alerts() {
+        // Return a copy of the alerts object to prevent modification of the original
+        return Object.assign({}, this.#client.alerts);
     }
 }

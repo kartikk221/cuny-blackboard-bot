@@ -13,33 +13,37 @@ export function build_assignments_command(builder) {
         .addNumberOption((option) =>
             option
                 .setName('course_number')
-                .setDescription('The course number (Example: #3 would be 3)')
+                .setDescription('The course number to display assignments for. (Example: 3 for "Course #3")')
                 .setRequired(true)
                 .setMinValue(1)
                 .setMaxValue(100)
         )
         .addStringOption((option) =>
-            option.setName('status').setDescription('Filter assignments by their status').setRequired(false).addChoices(
-                {
-                    name: 'Upcoming Only',
-                    value: 'UPCOMING',
-                },
-                {
-                    name: 'Submitted Only',
-                    value: 'SUBMITTED',
-                },
-                {
-                    name: 'Graded Only',
-                    value: 'GRADED',
-                }
-            )
+            option
+                .setName('status')
+                .setDescription('Filter assignments by their status.')
+                .setRequired(false)
+                .addChoices(
+                    {
+                        name: 'Upcoming Only',
+                        value: 'UPCOMING',
+                    },
+                    {
+                        name: 'Submitted Only',
+                        value: 'SUBMITTED',
+                    },
+                    {
+                        name: 'Graded Only',
+                        value: 'GRADED',
+                    }
+                )
         );
 }
 
 /**
  * Handles interactions for the `assignments` command.
  *
- * @param {import('discord.js').Interaction} interaction
+ * @param {import('discord.js').ChatInputCommandInteraction} interaction
  * @returns {Promise<void>}
  */
 export async function on_assignments_command(interaction) {

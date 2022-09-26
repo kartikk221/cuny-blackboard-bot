@@ -31,7 +31,9 @@ export function build_summary_command(builder) {
         .addNumberOption((option) =>
             option
                 .setName('max_courses_age')
-                .setDescription('Maximum age in "number of months" to filter out past courses')
+                .setDescription(
+                    'Maximum age in "number of months" to filter out past courses. (Default: 6 aka. 6 Months)'
+                )
                 .setMinValue(1)
                 .setMaxValue(48)
                 .setRequired(false)
@@ -41,7 +43,7 @@ export function build_summary_command(builder) {
 /**
  * Handles interactions for the `summary` command.
  *
- * @param {import('discord.js').Interaction} interaction
+ * @param {import('discord.js').ChatInputCommandInteraction} interaction
  * @returns {Promise<void>}
  */
 export async function on_summary_command(interaction) {
@@ -171,7 +173,7 @@ export async function generate_summary_embeds(client, type, max_courses_age = In
 
     // Convert the summary into an embed
     return spread_fields_over_embeds({
-        title: `Blackboard "${type}" Summary`,
+        title: type,
         description,
         fields: assignments.slice(0, 10).map(({ url, name, course, deadline_at, grade }) => ({
             name,
