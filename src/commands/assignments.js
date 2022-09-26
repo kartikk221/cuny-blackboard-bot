@@ -51,23 +51,10 @@ export async function on_assignments_command(interaction) {
     const client = get_registered_client(interaction);
     if (!client) throw new Error('NO_CLIENT');
 
-    // Ensure the courses have been cached before continuing
-    if (!client.cache['courses'])
-        return await interaction.reply({
-            ephemeral: true,
-            content: `Courses may be outdated. Please run the \`${process.env['COMMAND_PREFIX']} courses\` command before running this command.`,
-        });
-
     // Retrieve the course from the cache
-    const course = client.cache['courses'][`#${course_number}`];
-    if (!course)
-        return await interaction.reply({
-            ephemeral: true,
-            content: `The course number you have provided is invalid. Please run the \`${process.env['COMMAND_PREFIX']} courses\` command to see all available course numbers.`,
-        });
-
-    // Defer the reply as Blackboard may take a while to respond
-    await interaction.deferReply({ ephemeral: true });
+    const courses = await client.get_all_courses(Infinity);
+    const course = courses[`#${course_number}`];
+    if (!course) throw new Error('NO_COURSE');
 
     // Retrieve the assignments from Blackboard
     const assignments = await client.get_all_assignments(course);
@@ -76,7 +63,6 @@ export async function on_assignments_command(interaction) {
     const filtered = assignments.filter((assignment) => {
         // Assert the assignment has the specified status
         if (course_status) return assignment.status === course_status;
-
         return true;
     });
 
@@ -89,8 +75,9 @@ export async function on_assignments_command(interaction) {
                   name: name.substring(0, 256), // Truncate the name to 256 characters to prevent errors from Discord limits
                   value: [
                       `Status: \`${status}\``,
-                      `Due: <t:${Math.floor(deadline_at / 1000)}:R>`,
-                      grade ? `Grade: **${grade.score} / ${grade.possible} - ${grade.percent}%**` : '',
+                      grade ? `Grade: \`${grade.score} / ${grade.possible} - ${grade.percent}%\`` : '',
+                      `Due Date: <t:${Math.floor(deadline_at / 1000)}:R>`,
+                      grade && grade.comments ? `Comments:\n> ${grade.comments.split('\n').join('\n> ')}` : '',
                       url ? `**[[View Assignment]](${client.base}${url})**` : '',
                   ]
                       .filter((line) => line.length > 0)
@@ -100,5 +87,5 @@ export async function on_assignments_command(interaction) {
     };
 
     // Reply to the interaction with the embed message
-    await interaction.followUp({ embeds: spread_fields_over_embeds(embed), ephemeral: true });
+    await interaction.safe_reply({ embeds: spread_fields_over_embeds(embed), ephemeral: true });
 }

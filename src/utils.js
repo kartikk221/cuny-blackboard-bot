@@ -1,4 +1,14 @@
 /**
+ * Returns a Promise that resolves after the given number of milliseconds.
+ *
+ * @param {Number} ms
+ * @returns {Promise<void>}
+ */
+export function sleep(ms) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
  * Logs specified message to console in an organized log message
  *
  * @param {String} category
@@ -30,7 +40,7 @@ export async function with_retries(amount, delay, operation, onError) {
         if (onError) onError(error);
         if (amount > 0) {
             amount--;
-            await async_wait(delay);
+            await sleep(delay);
             return await with_retries(amount, delay, operation, onError);
         } else {
             throw error;
@@ -48,7 +58,7 @@ export async function with_retries(amount, delay, operation, onError) {
 export function spread_fields_over_embeds(embed_json) {
     const results = [];
     const { fields } = embed_json;
-    if (Array.isArray(fields)) {
+    if (Array.isArray(fields) && fields.length) {
         const max_fields = 25;
         const max_embeds = Math.ceil(fields.length / max_fields);
         for (let i = 0; i < max_embeds; i++) {
@@ -56,6 +66,8 @@ export function spread_fields_over_embeds(embed_json) {
             embed.fields = fields.slice(i * max_fields, (i + 1) * max_fields);
             results.push(embed);
         }
+    } else {
+        results.push(embed_json);
     }
     return results;
 }

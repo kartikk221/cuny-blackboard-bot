@@ -1,7 +1,8 @@
 import * as cheero from 'cheerio';
 import { EventEmitter } from 'events';
-import { with_retries } from '../utils.js';
+import { sleep, with_retries } from '../utils.js';
 
+export const BLACKBOARD_URL_BASE = 'https://bbhosted.cuny.edu';
 export const DEFAULT_USER_AGENT =
     'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/105.0.0.0 Safari/537.36';
 
@@ -13,12 +14,13 @@ export const RegisteredClients = new Map();
 
 // This class will act as an API client for each user
 export class BlackboardClient extends EventEmitter {
-    #cache = {};
-    #base = 'https://bbhosted.cuny.edu';
+    #keep_alive;
+    #base = BLACKBOARD_URL_BASE;
     #user_agent = DEFAULT_USER_AGENT;
     #client = {
         name: null,
         cookies: null,
+        cache: {},
     };
 
     /**
@@ -26,7 +28,6 @@ export class BlackboardClient extends EventEmitter {
      * @property {String=} name The name of the current authenticated user.
      * @property {String} cookies The cookies to use for the current authenticated user.
      */
-
     constructor() {
         // Initialize the EventEmitter class
         super(...arguments);
@@ -97,8 +98,26 @@ export class BlackboardClient extends EventEmitter {
             // Silently ignore this likely means the cookies are invalid
         }
 
-        // If the user is logged in, merge the provided client data with the current client data
-        if (is_logged_in) this.#client = Object.assign(this.#client, client);
+        // Ensure the user is logged in and this is not a ping import
+        if (is_logged_in && client.ping !== true) {
+            // Merge the client data with the internal client data
+            this.#client = Object.assign(this.#client, client);
+
+            // Clear the old keep alive interval
+            if (this.#keep_alive) clearInterval(this.#keep_alive);
+
+            // Start a new keep alive interval
+            this.#keep_alive = setInterval(async () => {
+                // Perform an import with just the cookies to keep the session alive
+                let alive = false;
+                try {
+                    alive = await this.import({ cookies, ping: true });
+                } catch (error) {}
+
+                // Emit an expire event to notify the caller that the session has expired
+                if (!alive) this.emit('expire');
+            }, 1000 * 60 * 5); // Keep Alive every 5 minutes
+        }
 
         // Return a Boolean based on a valid user name was found
         return is_logged_in;
@@ -118,6 +137,7 @@ export class BlackboardClient extends EventEmitter {
 
     /**
      * @typedef {Object} Course
+     * @property {String} id The course ID.
      * @property {String} name The name of the course.
      * @property {Number} updated_at The last time the course was updated in milliseconds.
      * @property {Object} urls The URLs for the course.
@@ -130,91 +150,122 @@ export class BlackboardClient extends EventEmitter {
      * Note! This method caches the courses in the returned Map.
      * You may clear the cache by calling the `Map.clear()` method on the returned Map.
      * @param {Number=} max_age The maximum age of each of class in milliseconds. Defaults to `6 months` max age.
+     * @param {Number=} max_cache_age The maximum age of the cached data in milliseconds. Defaults to `1 day` max age.
      * @param {Number=} retries The number of times to retry the fetch process.
      * @param {Number=} delay The delay in milliseconds between each retry.
      * @returns {Promise<Object<string, Course>>}
      */
-    async get_all_courses(max_age = 1000 * 60 * 60 * 24 * 30 * 6, retries = 5, delay = 1000) {
+    async get_all_courses(
+        max_age = 1000 * 60 * 60 * 24 * 30 * 6,
+        max_cache_age = 1000 * 60 * 60 * 24,
+        retries = 5,
+        delay = 1000
+    ) {
         // Ensure client has been authenticated
         this._ensure_authenticated();
 
-        // Fetch the grades stream viewer POST URL as JSON data
-        const json = await with_retries(retries, delay, async () => {
-            // Make fetch request to the Blackboard API endpoint
-            const response = await fetch(`${this.#base}/webapps/streamViewer/streamViewer`, {
-                method: 'POST',
-                headers: {
-                    'user-agent': this.#user_agent,
-                    cookie: this.#client.cookies,
-                    accept: 'text/javascript, text/html, application/xml, text/xml, */*',
-                    'content-type': 'application/x-www-form-urlencoded; charset=UTF-8',
-                    pragma: 'no-cache',
-                    'cache-control': 'no-cache',
-                },
-                body: `cmd=loadStream&streamName=mygrades&providers=%7B%7D&forOverview=false`,
+        // Retrieve courses from cache or fallback to fetching them from Blackboard
+        let courses;
+        const cache = this.#client.cache.courses;
+        if (cache && Date.now() - cache.updated_at < max_cache_age) {
+            courses = cache.value;
+        } else {
+            // Fetch the grades stream viewer POST URL as JSON data
+            const json = await with_retries(retries, delay, async () => {
+                // Make fetch request to the Blackboard API endpoint
+                const response = await fetch(`${this.#base}/webapps/streamViewer/streamViewer`, {
+                    method: 'POST',
+                    headers: {
+                        'user-agent': this.#user_agent,
+                        cookie: this.#client.cookies,
+                        accept: 'text/javascript, text/html, application/xml, text/xml, */*',
+                        'content-type': 'application/x-www-form-urlencoded; charset=UTF-8',
+                        pragma: 'no-cache',
+                        'cache-control': 'no-cache',
+                    },
+                    body: `cmd=loadStream&streamName=mygrades&providers=%7B%7D&forOverview=false`,
+                });
+
+                // Ensure the response status is 200
+                if (response.status !== 200) throw new Error('Invalid response status code.');
+
+                // Return the response
+                return await response.json();
             });
 
-            // Ensure the response status is 200
-            if (response.status !== 200) throw new Error('Invalid response status code.');
+            // Destructure the JSON data into the courses array
+            const { sv_extras, sv_streamEntries } = json;
+            const { sx_courses } = sv_extras;
 
-            // Return the response
-            return await response.json();
-        });
+            // Ensure both grade entries and courses are present
+            if (!Array.isArray(sv_streamEntries) || !Array.isArray(sx_courses))
+                throw new Error('Invalid courses payload received from Blackboard.');
 
-        // Destructure the JSON data into the courses array
-        const { sv_extras, sv_streamEntries } = json;
-        const { sx_courses } = sv_extras;
-
-        // Ensure both grade entries and courses are present
-        if (!Array.isArray(sv_streamEntries) || !Array.isArray(sx_courses))
-            throw new Error('Invalid courses payload received from Blackboard.');
-
-        // Iterate through each grade entry and match it to a course
-        let courses = [];
-        sv_streamEntries.forEach((grade) => {
-            const { se_courseId, se_timestamp, se_rhs } = grade;
-            const course = sx_courses.find((course) => course.id === se_courseId);
-            if (course) {
-                const { name, homePageUrl } = course;
-                const updated_at = new Date(se_timestamp).getTime();
-                if (updated_at + max_age > Date.now()) {
-                    // Add the course to the cache with a easy to remember index based identifier
-                    // This will make it easier to reference the course later through commands
+            // Iterate through each grade entry and match it to a course
+            courses = [];
+            sv_streamEntries.forEach((grade) => {
+                const { se_courseId, se_timestamp, se_rhs } = grade;
+                const course = sx_courses.find((course) => course.id === se_courseId);
+                if (course) {
+                    // Store the course object among the courses
+                    const { name, homePageUrl } = course;
                     courses.push({
                         id: se_courseId,
                         name: name.split('[')[0].trim() || name, // Simplify the course name by removing codes/identifiers
-                        updated_at,
+                        updated_at: new Date(se_timestamp).getTime(),
                         urls: {
                             grades: se_rhs,
                             class: homePageUrl,
                         },
                     });
                 }
+            });
+
+            // If no courses were found, retry the request if retries available
+            if (courses.length === 0 && retries > 0) {
+                // Sleep for the delay
+                await sleep(delay);
+
+                // Retry the request with one less retry
+                return await this.get_all_courses(max_age, max_cache_age, retries - 1, delay);
+            }
+
+            // Sort the courses by the updated timestamp
+            courses = courses.sort((a, b) => b.updated_at - a.updated_at);
+
+            // Cache the courses for future use
+            this.#client.cache.courses = {
+                updated_at: Date.now(),
+                value: courses,
+            };
+
+            // Emit the persist event to notify the caller that the client data has changed
+            this.emit('persist');
+        }
+
+        // Conver the courses into an object with the index as the #key
+        const filtered = {};
+        courses.forEach((course, index) => {
+            // Filter the course object by the max age
+            if (course.updated_at + max_age > Date.now()) {
+                // Add the course to the object
+                filtered[`#${index + 1}`] = course;
             }
         });
 
-        // Sort the courses by the last updated time
-        courses = courses.sort((a, b) => b.updated_at - a.updated_at);
-
-        // Conver the courses into an object with the index as the #key
-        const object = {};
-        courses.forEach((course, index) => (object[`#${index + 1}`] = course));
-
-        // Cache the courses
-        this.#cache['courses'] = object;
-
-        // Return the courses
-        return object;
+        // Return the filtered courses
+        return filtered;
     }
 
     /**
      * @typedef {Object} Assignment
      * @property {String} id The ID of the assignment.
-     * @property {String=} url The URL to the assignment.
+     * @property {String} url The URL to the assignment.
      * @property {String} name The name of the assignment.
      * @property {Number} cursor The position cursor of the assignment.
      * @property {('GRADED'|'SUBMITTED'|'UPCOMING')} status The status constant of the assignment.
      * @property {Object=} grade The grade object of the assignment.
+     * @property {String=} grade.comments The instructor's grading comments for the assignment.
      * @property {String=} grade.score The student's score of the assignment.
      * @property {String=} grade.possible The maximum possible score of the assignment.
      * @property {String=} grade.percent The percentage score of the assignment.
@@ -287,26 +338,32 @@ export class BlackboardClient extends EventEmitter {
 
                 // Generate a grade object if both a valid scored and total properties are present
                 let grade = null;
-                if (!isNaN(+scored + +total))
+                if (!isNaN(+scored + +total)) {
+                    // Parse the comments text from the grade cell
+                    let comments = null;
+                    const feedback = element.find('.cell.grade')?.find?.('.grade-feedback')?.attr?.('onclick');
+                    if (feedback) {
+                        const chunks = feedback.split('<p>');
+                        if (chunks.length > 1)
+                            comments = chunks
+                                .slice(1)
+                                .map((chunk) => chunk.split('</p>')[0])
+                                .join('\n');
+                    }
+
+                    // Fill the grade object with the parsed values
                     grade = {
                         score: +scored,
                         possible: +total,
                         percent: +((+scored / +total) * 100).toFixed(2),
+                        comments,
                     };
-
-                // Parse a url object depending on whether the name cell has a onclick handler
-                let url = null;
-                let onclick = element.find('.cell.gradable').children().eq(0).attr('onclick');
-                if (onclick) {
-                    // Parse the onclick based on double quotes
-                    onclick = onclick.split("'")?.[1]?.split?.("'")?.[0];
-                    if (onclick) url = onclick;
                 }
 
                 // Add the assignment to the list
                 assignments.push({
                     id,
-                    url,
+                    url: `/webapps/assignment/uploadAssignment?action=showHistory&course_id=${course.id}&outcome_definition_id=${id}`,
                     name,
                     cursor,
                     status,
@@ -321,6 +378,17 @@ export class BlackboardClient extends EventEmitter {
 
         // Return the assignments
         return assignments;
+    }
+
+    /**
+     * Destroys this client and clears all cookies.
+     */
+    destroy() {
+        // Expire the client object
+        this.#client = null;
+
+        // Clear the keep alive interval if it exists
+        if (this.#keep_alive) clearInterval(this.#keep_alive);
     }
 
     /**
@@ -353,13 +421,5 @@ export class BlackboardClient extends EventEmitter {
      */
     get user_agent() {
         return this.#user_agent;
-    }
-
-    /**
-     * Returns the internal cache for various data.
-     * @returns {Object<string, any>}
-     */
-    get cache() {
-        return this.#cache;
     }
 }

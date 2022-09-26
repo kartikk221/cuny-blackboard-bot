@@ -1,6 +1,6 @@
 import { readFile, writeFile } from 'fs/promises';
 import { send_direct_message } from '../discord.js';
-import { BlackboardClient, RegisteredClients } from './blackboard.js';
+import { BlackboardClient, RegisteredClients } from './client.js';
 
 /**
  * Returns a unique caller identifier for the given Discord interaction.
@@ -44,10 +44,9 @@ export function get_registered_client(interaction) {
  *
  * @param {import('discord.js').Interaction} interaction A Discord interaction object
  * @param {String} cookies The cookies to use for the client.
- * @param {String} ping_interval The interval to ping the server in milliseconds to keep cookies alive.
  * @returns {Promise<BlackboardClient|void>}
  */
-export async function register_client(interaction, cookies, ping_interval = 1000 * 60 * 5) {
+export async function register_client(interaction, cookies) {
     // Convert the interaction into an identifier
     const identifier = interaction_to_identifier(interaction);
 
@@ -70,38 +69,27 @@ export async function register_client(interaction, cookies, ping_interval = 1000
         clearInterval(old_client.interval);
     }
 
-    // Bind a new interval to ping the server
-    let failures = 0;
-    client.interval = setInterval(async () => {
-        // Safely ping the server
-        let success = false;
-        try {
-            success = await client.import({ cookies });
-        } catch (error) {}
+    // Bind a "persist" event handler to store the clients when data is updated
+    client.on('persist', store_clients);
 
-        // If the ping failed, increment the failure count
-        if (!success) failures++;
+    // Bind an "expire" event handler to the client
+    client.once('expire', async () => {
+        // Send a personal DM to the user
+        await send_direct_message(
+            {
+                client: interaction.client,
+                guild: interaction.guild || interaction.guildId,
+                member: interaction.member || interaction.user.id,
+            },
+            `Your Blackboard account cookies have **expired**.\nPlease run the \`${process.env['COMMAND_PREFIX']} setup\` command to continue usage.`
+        );
 
-        // If the ping failed 10 times, expire the client
-        if (failures >= 10) {
-            // Expire the ping interval and remove the client
-            clearInterval(client.interval);
-            RegisteredClients.delete(identifier);
+        // Remove the client from the registry
+        RegisteredClients.delete(identifier);
 
-            // Send a personal DM to the user
-            await send_direct_message(
-                {
-                    client: interaction.client,
-                    guild: interaction.guild || interaction.guildId,
-                    member: interaction.member || interaction.user.id,
-                },
-                `Your Blackboard account cookies have expired. Please run the \`${process.env['COMMAND_PREFIX']} setup\` command to continue usage.`
-            );
-
-            // Update the clients in the file system
-            await store_clients();
-        }
-    }, ping_interval);
+        // Update the clients in the file system
+        await store_clients();
+    });
 
     // Store the new client
     RegisteredClients.set(identifier, client);
@@ -150,6 +138,31 @@ export async function recover_clients(bot, safe = true) {
         // Create a new client
         const client = new BlackboardClient();
 
+        // Bind a "persist" event handler to store the clients when data is updated
+        client.on('persist', store_clients);
+
+        // Bind an expire event handler to the client
+        client.once('expire', async () => {
+            // Retrieve the caller Discord guild and user identifiers
+            const { guild, user } = identifier_to_caller(identifier);
+
+            // Send a personal DM to the user with the guild name
+            await send_direct_message(
+                {
+                    client: bot,
+                    guild,
+                    member: user,
+                },
+                `Your Blackboard account cookies have **expired**.\nPlease run the \`${process.env['COMMAND_PREFIX']} setup\` command to continue usage.`
+            );
+
+            // Remove the client from the registry
+            RegisteredClients.delete(identifier);
+
+            // Update the clients in the file system
+            await store_clients();
+        });
+
         // Import the client JSON
         let valid = false;
         try {
@@ -158,27 +171,13 @@ export async function recover_clients(bot, safe = true) {
             if (!safe) throw error;
         }
 
-        // Register the client if it is valid or send a DM to the owner if no longer valid
+        // Determine if the client credentials are valid
         if (valid) {
+            // Store the client in the registry
             RegisteredClients.set(identifier, client);
         } else {
-            // Perform this safely since the DM to the user may fail for various reasons
-            try {
-                // Retrieve the caller Discord guild and user identifiers
-                const { guild, user } = identifier_to_caller(identifier);
-
-                // Send a personal DM to the user with the guild name
-                await send_direct_message(
-                    {
-                        client: bot,
-                        guild,
-                        member: user,
-                    },
-                    `Your Blackboard account cookies have **expired**.\nPlease run the \`${process.env['COMMAND_PREFIX']} setup\` command to continue usage.`
-                );
-            } catch (error) {
-                if (!safe) throw error;
-            }
+            // Emit the expire event to alert the user of expired credentials
+            client.emit('expire');
         }
     }
 
