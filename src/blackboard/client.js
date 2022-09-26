@@ -25,6 +25,7 @@ export class BlackboardClient extends EventEmitter {
     #client = {
         name: null,
         cookies: null,
+        ignore: {},
         alerts: {},
         cache: {},
     };
@@ -184,6 +185,71 @@ export class BlackboardClient extends EventEmitter {
     }
 
     /**
+     * Returns whether or not the specified type of data is being ignored for the given identifier.
+     *
+     * @param {String} type
+     * @param {String} identifier
+     * @returns {Boolean} Returns `true` if the data is being ignored, otherwise `false`.
+     */
+    ignored(type, identifier) {
+        // Retrieve the ignored values for this type
+        const ignored = this.#client.ignore[type];
+        if (ignored) return ignored.includes(identifier);
+    }
+
+    /**
+     * Ignore the specified type of data for this client.
+     *
+     * @param {String} type
+     * @param {String} identifier
+     * @returns {Boolean} Returns `true` if the data was ignored, `false` if the data was already being ignored.
+     */
+    ignore(type, identifier) {
+        // Determine if an Array already exists for the type
+        if (!this.#client.ignore[type]) this.#client.ignore[type] = [];
+
+        // Add the identifier to the ignore list if it does not already exist
+        if (!this.#client.ignore[type].includes(identifier)) {
+            // Add the identifier to the ignore list
+            this.#client.ignore[type].push(identifier);
+
+            // Emit a 'persist' event
+            this.emit('persist');
+            return true;
+        } else {
+            return false;
+        }
+    }
+
+    /**
+     * Un-Ignore the specified type of data for this client.
+     *
+     * @param {String} type
+     * @param {String} identifier
+     * @returns {Boolean} Returns `true` if the data was un-ignored, `false` if the data was already not being being ignored.
+     */
+    unignore(type, identifier) {
+        // Determine if an Array already exists for the type
+        if (!this.#client.ignore[type]) this.#client.ignore[type] = [];
+
+        // Remove the identifier from the ignore list if it exists
+        const index = this.#client.ignore[type].indexOf(identifier);
+        if (index !== -1) {
+            // Remove the identifier from the ignore list
+            this.#client.ignore[type].splice(index, 1);
+
+            // Delete the ignore list if it is empty
+            if (this.#client.ignore[type].length === 0) delete this.#client.ignore[type];
+
+            // Emit a 'persist' event
+            this.emit('persist');
+            return true;
+        } else {
+            return false;
+        }
+    }
+
+    /**
      * @typedef {Object} Course
      * @property {String} id The course ID.
      * @property {String} name The name of the course.
@@ -216,7 +282,8 @@ export class BlackboardClient extends EventEmitter {
         let courses;
         const cache = this.#client.cache.courses;
         if (cache && Date.now() - cache.updated_at < max_cache_age) {
-            courses = cache.value;
+            // Store a shallow copy of the cached courses to prevent the cache from being modified by caller
+            courses = Object.assign([], cache.value);
         } else {
             // Fetch the grades stream viewer POST URL as JSON data
             const json = await with_retries(retries, delay, async () => {
@@ -298,11 +365,11 @@ export class BlackboardClient extends EventEmitter {
         // Conver the courses into an object with the index as the #key
         const filtered = {};
         courses.forEach((course, index) => {
-            // Filter the course object by the max age
-            if (course.updated_at + max_age > Date.now()) {
-                // Add the course to the object
-                filtered[`#${index + 1}`] = course;
-            }
+            // Filter out courses that are older than the max age
+            if (course.updated_at + max_age < Date.now()) return;
+
+            // Add the course to the object
+            filtered[`#${index + 1}`] = course;
         });
 
         // Return the filtered courses

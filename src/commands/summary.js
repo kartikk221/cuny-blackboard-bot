@@ -77,6 +77,12 @@ export async function generate_summary_embeds(client, type, max_courses_age = In
     // Retrieve the most recently available courses from Blackboard
     const courses = await client.get_all_courses(max_courses_age);
 
+    // Filter out courses that are being ignored
+    Object.keys(courses).forEach((id) => {
+        const course = courses[id];
+        if (client.ignored('course', course.id)) delete courses[id];
+    });
+
     // Retrieve each course's assignments
     const names = Object.keys(courses);
     const results = await Promise.all(names.map((key) => client.get_all_assignments(courses[key])));
