@@ -76,7 +76,7 @@ export async function on_courses_command(interaction) {
         console.error(error);
         return await interaction.safe_reply({
             ephemeral: true,
-            content: `Failed to retrieve courses from Blackboard. Please try again later or run the setup command again if this issue persists.`,
+            content: `Failed to retrieve courses from Blackboard. Please try again later or run the login command again if this issue persists.`,
         });
     }
 
@@ -88,7 +88,7 @@ export async function on_courses_command(interaction) {
                 description: 'Below are some of the courses that are available on your Blackboard account.',
                 fields: Object.keys(courses).map((key) => {
                     const { id, name, updated_at, urls } = courses[key];
-                    const ignored = client.ignored('course', id);
+                    const ignored = client.ignored('courses', id);
                     return {
                         name: `Course ${key} ${ignored ? `**(Ignored)** ` : ''}`,
                         value: [
@@ -117,7 +117,7 @@ export async function on_courses_command(interaction) {
     const is_ignore = COURSE_ACTIONS[action] === COURSE_ACTIONS.IGNORE;
 
     // Ignore the course with the course Blackboard ID
-    client[is_ignore ? 'ignore' : 'unignore']('course', course.id);
+    client[is_ignore ? 'ignore' : 'unignore']('courses', course.id);
 
     // Reply with a success message
     return await interaction.safe_reply({

@@ -95,7 +95,7 @@ export async function register_client(interaction, cookies) {
                 guild: interaction.guild || interaction.guildId,
                 member: interaction.member || interaction.user.id,
             },
-            `Your Blackboard account cookies have **expired**.\nPlease run the \`${process.env['COMMAND_PREFIX']} setup\` command to continue usage.`
+            `Your Blackboard account cookies have **expired**.\nPlease run the \`${process.env['COMMAND_PREFIX']} login\` command to continue usage.`
         );
 
         // Update the clients json
@@ -144,7 +144,6 @@ export async function recover_clients(bot, safe = true) {
     const clients = JSON.parse(raw);
 
     // Register each client with the server
-    let requires_update = false;
     for (const identifier in clients) {
         // Create a new client
         const client = new BlackboardClient();
@@ -184,7 +183,7 @@ export async function recover_clients(bot, safe = true) {
                     guild,
                     member: user,
                 },
-                `Your Blackboard account cookies have **expired**.\nPlease run the \`${process.env['COMMAND_PREFIX']} setup\` command to continue usage.`
+                `Your Blackboard account cookies have **expired**.\nPlease run the \`${process.env['COMMAND_PREFIX']} login\` command to continue usage.`
             );
 
             // Update the clients json
@@ -196,24 +195,13 @@ export async function recover_clients(bot, safe = true) {
         try {
             valid = await client.import(clients[identifier]);
         } catch (error) {
+            console.error(error);
             if (!safe) throw error;
         }
 
-        // Determine if the client is no longer valid valid
-        if (!valid) {
-            // Emit the "expired" event to send a DM to the user
-            client.emit('expired');
-
-            // Remove the client from the registry
-            RegisteredClients.delete(identifier);
-
-            // Mark the clients as requiring an update
-            requires_update = true;
-        }
+        // Emit the "expired" event to send a DM to the user
+        if (!valid) client.emit('expired');
     }
-
-    // Store the clients to the file system
-    if (requires_update) await store_clients();
 
     // Return the number of clients that were successfully recovered
     return RegisteredClients.size;

@@ -69,14 +69,20 @@ export class BlackboardClient extends EventEmitter {
      */
     async import(client, retries = 5, delay = 1000) {
         // Create a shallow copy of the client object to prevent mutation of the original object
-        client = Object.assign({}, client);
+        if (!client.ping) client = Object.assign({}, client);
+
+        // Fill the client cookies with an empty string if it is null
+        client.cookies = client.cookies || '';
 
         // Convert the cookies into a jar object
         const jar = {};
-        client.cookies.split(';').forEach((cookie) => {
-            const [key, value] = cookie.split('=');
-            jar[key.trim()] = value.trim();
-        });
+        client.cookies
+            .split(';')
+            .filter((cookie) => cookie.trim().length > 0)
+            .forEach((cookie) => {
+                const [key, value] = cookie.split('=');
+                if (key) jar[key.trim()] = value.trim();
+            });
 
         // Parse the response as text HTML
         const text = await with_retries(retries, delay, async () => {
@@ -123,7 +129,7 @@ export class BlackboardClient extends EventEmitter {
             console.error(error);
         }
 
-        // Ensure this is not a ping import
+        // Ensure this is not a ping import call as we do not want to overwrite the client data in this case
         if (!client.ping) {
             // Merge the client data with the internal client data
             this.#client = Object.assign(this.#client, client);
@@ -151,7 +157,9 @@ export class BlackboardClient extends EventEmitter {
                     let alive = false;
                     try {
                         alive = await this.import({ cookies: this.#client.cookies, ping: true });
-                    } catch (error) {}
+                    } catch (error) {
+                        console.error(error);
+                    }
 
                     // Expire the cookies and emit 'expired' event if the session is no longer alive
                     if (!alive) {
@@ -160,6 +168,7 @@ export class BlackboardClient extends EventEmitter {
 
                         // Expire the client if the failure count is greater than the max retries
                         if (failures >= MAX_KEEP_ALIVE_RETRIES) {
+                            clearInterval(this.#keep_alive);
                             this.#client.cookies = null;
                             this.emit('expired');
                         }

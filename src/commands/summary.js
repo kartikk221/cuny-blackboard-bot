@@ -80,7 +80,7 @@ export async function generate_summary_embeds(client, type, max_courses_age = In
     // Filter out courses that are being ignored
     Object.keys(courses).forEach((id) => {
         const course = courses[id];
-        if (client.ignored('course', course.id)) delete courses[id];
+        if (client.ignored('courses', course.id)) delete courses[id];
     });
 
     // Retrieve each course's assignments

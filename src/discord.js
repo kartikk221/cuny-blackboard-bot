@@ -1,8 +1,7 @@
-import fetch from 'node-fetch';
 import { SlashCommandBuilder, REST as RestClient, Routes as RestRoutes } from 'discord.js';
 
 // Import the slash commands and their handlers
-import { build_setup_command, on_setup_command } from './commands/setup.js';
+import { build_login_command, on_login_command } from './commands/login.js';
 import { build_courses_command, on_courses_command } from './commands/courses.js';
 import { build_assignments_command, on_assignments_command } from './commands/assignments.js';
 import { build_summary_command, on_summary_command } from './commands/summary.js';
@@ -18,7 +17,7 @@ export async function register_slash_commands() {
         .setName(process.env['COMMAND_PREFIX'].replace('/', ''))
         .setDescription('Easily manage your CUNY Blackboard courses and assignments.')
         .setDMPermission(false)
-        .addSubcommand(build_setup_command)
+        .addSubcommand(build_login_command)
         .addSubcommand(build_courses_command)
         .addSubcommand(build_assignments_command)
         .addSubcommand(build_summary_command)
@@ -50,7 +49,7 @@ export async function on_client_interaction(interaction) {
     // Set a timeout to defer the interaction if no response is sent within 2 seconds
     const defer_timeout = setTimeout(
         () =>
-            !interaction.replied
+            !interaction.deferred
                 ? interaction.deferReply({
                       ephemeral: true,
                   })
@@ -79,8 +78,8 @@ export async function on_client_interaction(interaction) {
     try {
         // Handle the sub-command based on the name
         switch (interaction.options.getSubcommand()) {
-            case 'setup':
-                return await on_setup_command(interaction);
+            case 'login':
+                return await on_login_command(interaction);
             case 'courses':
                 return await on_courses_command(interaction);
             case 'assignments':
@@ -102,7 +101,7 @@ export async function on_client_interaction(interaction) {
             case 'NO_CLIENT':
                 return await interaction.safe_reply({
                     ephemeral: true,
-                    content: `Your Blackboard account has not been setup for this command yet. Please run the \`${process.env['COMMAND_PREFIX']} setup\` command to resolve this issue.`,
+                    content: `No Blackboard Account is available for this command. Please run the \`${process.env['COMMAND_PREFIX']} login\` command to resolve this issue.`,
                 });
             case 'NO_COURSE':
                 return await interaction.safe_reply({
