@@ -118,26 +118,33 @@ export class BlackboardClient extends EventEmitter {
                 });
 
                 // Ensure the response status is 200
-                if (response.status !== 200) throw new Error('Invalid response status code.');
+                if (response.status !== 200) throw new Error('Invalid response status: ' + response.status);
+
+                // Ensure the response url is not the login page
+                // Return without an error so it is not caught by the retry logic
+                if (response.url.includes('ssologin.cuny.edu')) return;
 
                 // Ensure the response url is the Blackboard homepage
-                if (!response.url.startsWith(this.#base)) throw new Error('Invalid response URL.');
+                if (!response.url.startsWith(this.#base)) throw new Error('Invalid response URL: ' + response.url);
 
                 // Return the response
                 return await response.text();
             });
 
-            // Cache the cheerio HTML DOM object
-            const $ = cheero.load(text);
+            // Ensure we received some text
+            if (text) {
+                // Cache the cheerio HTML DOM object
+                const $ = cheero.load(text);
 
-            // Strip the nav link to only contain the user name
-            $('#global-nav-link').children().remove();
+                // Strip the nav link to only contain the user name
+                $('#global-nav-link').children().remove();
 
-            // Parse the user name
-            client.name = $('#global-nav-link').text().trim();
+                // Parse the user name
+                client.name = $('#global-nav-link').text().trim();
 
-            // Determine if the session is valid based on a valid client name
-            is_logged_in = client.name.length > 0;
+                // Determine if the session is valid based on a valid client name
+                is_logged_in = client.name.length > 0;
+            }
         } catch (error) {
             console.error(error);
         }
