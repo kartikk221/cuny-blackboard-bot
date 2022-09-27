@@ -1,4 +1,5 @@
 import fetch from 'node-fetch';
+import makeFetchCookie from 'fetch-cookie';
 import * as whenTime from 'when-time';
 import * as cheero from 'cheerio';
 import { EventEmitter } from 'events';
@@ -18,6 +19,8 @@ export const RegisteredClients = new Map();
 
 // This class will act as an API client for each user
 export class BlackboardClient extends EventEmitter {
+    #fetch;
+    #cookie_jar;
     #keep_alive;
     #base = BLACKBOARD_URL_BASE;
     #user_agent = DEFAULT_USER_AGENT;
@@ -39,6 +42,12 @@ export class BlackboardClient extends EventEmitter {
     constructor() {
         // Initialize the EventEmitter class
         super(...arguments);
+
+        // Create a new cookie jar
+        this.#cookie_jar = new makeFetchCookie.toughCookie.CookieJar();
+
+        // Create a new fetch instance with the cookie jar
+        this.#fetch = makeFetchCookie(fetch, this.#cookie_jar);
     }
 
     /**
@@ -49,6 +58,20 @@ export class BlackboardClient extends EventEmitter {
         // Ensure client has valid cookies for authentication
         // Throw the catch-all no client error to alert the user of invalid cookies
         if (this.#client.cookies === null) throw new Error('NO_CLIENT');
+    }
+
+    /**
+     * Returns the most recent cookies for this client.
+     *
+     * @private
+     * @returns {Promise<String>}
+     */
+    async _get_cookies() {
+        // Retrieve the cookies from the cookie jar
+        const cookies = await this.#cookie_jar.getCookies(this.#base);
+
+        // Return the cookies as a string
+        return cookies.map((cookie) => `${cookie.key}=${cookie.value}`).join('; ');
     }
 
     /**
@@ -74,46 +97,36 @@ export class BlackboardClient extends EventEmitter {
         // Fill the client cookies with an empty string if it is null
         client.cookies = client.cookies || '';
 
-        // Convert the cookies into a jar object
-        const jar = {};
-        client.cookies
-            .split(';')
-            .filter((cookie) => cookie.trim().length > 0)
-            .forEach((cookie) => {
-                const [key, value] = cookie.split('=');
-                if (key) jar[key.trim()] = value.trim();
+        // If this is not a ping import, parse the string cookies into the cookie jar
+        if (!client.ping)
+            client.cookies.split(';').forEach((cookie) => {
+                const [key, value = ''] = cookie.split('=');
+                if (key) this.#cookie_jar.setCookie(`${key}=${value}`, this.#base);
             });
-
-        // Parse the response as text HTML
-        const text = await with_retries(retries, delay, async () => {
-            // Make the fetch request to the Blackboard homepage
-            const response = await fetch(this.#base, {
-                method: 'GET',
-                headers: {
-                    'user-agent': this.#user_agent,
-                    cookie: client.cookies,
-                },
-            });
-
-            // Ensure the response status is 200
-            if (response.status !== 200) throw new Error('Invalid response status code.');
-
-            // Retrieve the set-cookie header
-            const set_cookie = response.headers.get('set-cookie');
-            if (set_cookie)
-                set_cookie.split(', ').forEach((raw) => {
-                    const cookie = raw.split('; ')[0];
-                    const [key, value] = cookie.split('=');
-                    jar[key.trim()] = value.trim();
-                });
-
-            // Return the response
-            return await response.text();
-        });
 
         // Attempt to safely parse the user name to validate the cookies session
         let is_logged_in = false;
         try {
+            // Parse the response as text HTML
+            const text = await with_retries(retries, delay, async () => {
+                // Make the fetch request to the Blackboard homepage
+                const response = await this.#fetch(this.#base, {
+                    method: 'GET',
+                    headers: {
+                        'user-agent': this.#user_agent,
+                    },
+                });
+
+                // Ensure the response status is 200
+                if (response.status !== 200) throw new Error('Invalid response status code.');
+
+                // Ensure the response url is the Blackboard homepage
+                if (!response.url.startsWith(this.#base)) throw new Error('Invalid response URL.');
+
+                // Return the response
+                return await response.text();
+            });
+
             // Cache the cheerio HTML DOM object
             const $ = cheero.load(text);
 
@@ -139,14 +152,6 @@ export class BlackboardClient extends EventEmitter {
                 // Re-schedule all alerts to account for the new imported alerts
                 this._reschedule_alerts();
 
-                // Update the cookies with the new jar
-                this.#client.cookies = Object.keys(jar)
-                    .map((key) => `${key}=${jar[key]}`)
-                    .join('; ');
-
-                // Emit a 'persist' event if the cookies have changed
-                if (client.cookies !== this.#client.cookies) this.emit('persist');
-
                 // Clear the old keep alive interval if it exists
                 if (this.#keep_alive) clearInterval(this.#keep_alive);
 
@@ -156,7 +161,7 @@ export class BlackboardClient extends EventEmitter {
                     // Perform an import with just the cookies to keep the session alive
                     let alive = false;
                     try {
-                        alive = await this.import({ cookies: this.#client.cookies, ping: true });
+                        alive = await this.import({ cookies: await this._get_cookies(), ping: true });
                     } catch (error) {
                         console.error(error);
                     }
@@ -169,6 +174,7 @@ export class BlackboardClient extends EventEmitter {
                         // Expire the client if the failure count is greater than the max retries
                         if (failures >= MAX_KEEP_ALIVE_RETRIES) {
                             clearInterval(this.#keep_alive);
+                            this.#cookie_jar.removeAllCookies();
                             this.#client.cookies = null;
                             this.emit('expired');
                         }
@@ -176,6 +182,7 @@ export class BlackboardClient extends EventEmitter {
                 }, 1000 * 60 * 5); // Keep Alive every 5 minutes
             } else {
                 // Clear the cookies value if the user is not logged in
+                this.#cookie_jar.removeAllCookies();
                 this.#client.cookies = null;
             }
         }
@@ -186,9 +193,12 @@ export class BlackboardClient extends EventEmitter {
 
     /**
      * Exports the current client to a JSON object.
-     * @returns {Client}
+     * @returns {Promise<Client>}
      */
-    export() {
+    async export() {
+        // Parse and update the client cookies with the current cookie jar
+        this.#client.cookies = await this._get_cookies();
+
         // Return a shallow copy of the client to allow for the caller to modify the object without affecting the internal client data
         return Object.assign({}, this.#client);
     }
@@ -297,11 +307,10 @@ export class BlackboardClient extends EventEmitter {
             // Fetch the grades stream viewer POST URL as JSON data
             const json = await with_retries(retries, delay, async () => {
                 // Make fetch request to the Blackboard API endpoint
-                const response = await fetch(`${this.#base}/webapps/streamViewer/streamViewer`, {
+                const response = await this.#fetch(`${this.#base}/webapps/streamViewer/streamViewer`, {
                     method: 'POST',
                     headers: {
                         'user-agent': this.#user_agent,
-                        cookie: this.#client.cookies,
                         accept: 'text/javascript, text/html, application/xml, text/xml, */*',
                         'content-type': 'application/x-www-form-urlencoded; charset=UTF-8',
                         pragma: 'no-cache',
@@ -417,11 +426,10 @@ export class BlackboardClient extends EventEmitter {
         // Fetch the raw HTML for the course from the grades URL
         const text = await with_retries(retries, delay, async () => {
             // Make fetch request to the Blackboard API endpoint
-            const response = await fetch(`${this.#base}${course.urls.grades}`, {
+            const response = await this.#fetch(`${this.#base}${course.urls.grades}`, {
                 method: 'GET',
                 headers: {
                     'user-agent': this.#user_agent,
-                    cookie: this.#client.cookies,
                 },
             });
 
@@ -652,14 +660,6 @@ export class BlackboardClient extends EventEmitter {
      */
     get name() {
         return this.#client.name;
-    }
-
-    /**
-     * Returns the cookies of the current authenticated user.
-     * @returns {String}
-     */
-    get cookies() {
-        return this.#client.cookies;
     }
 
     /**

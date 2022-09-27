@@ -120,7 +120,7 @@ export async function register_client(interaction, cookies) {
 export async function store_clients() {
     // Convert Map to object of cookies by identifier
     const clients = {};
-    for (const [identifier, client] of RegisteredClients) clients[identifier] = client.export();
+    for (const [identifier, client] of RegisteredClients) clients[identifier] = await client.export();
 
     // Store all registered clients to the filesystem
     await writeFile(process.env['CLIENTS_JSON'], JSON.stringify(clients, null, 2));
