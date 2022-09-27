@@ -23,6 +23,7 @@ This bot was written to be used for personal use only hence some of the limitati
 - Each connected Blackboard account's name, session cookies, preferences and other cache data is stored in a JSON on the filesystem.
 - While the bot can multiple Discord users in as many servers as the bot is a member of, there is no way to control permissions for individual users.
 - While you may host the bot and allow your peers to use the bot in a shared Discord server, all users should be mindful that their Blackboard can be accessed by the host easily due to the limitations above.
+- While the bot will try to keep login sessions alive for as long as possible, Blackboard can at times randomly expire a session thus you may have to re-login every once in a while to continue usage.
 
 ## License
 [MIT](./LICENSE)
