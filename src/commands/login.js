@@ -15,14 +15,6 @@ export function build_login_command(builder) {
         )
         .addStringOption((option) =>
             option.setName('password').setDescription('Your CUNYFirst password.').setRequired(false)
-        )
-        .addStringOption((option) =>
-            option
-                .setName('cookies')
-                .setDescription(
-                    '(Alternative) Existing Blackboard session cookies (Format: key1=value1; key2=value2...)'
-                )
-                .setRequired(false)
         );
 }
 
@@ -37,9 +29,6 @@ export async function on_login_command(interaction) {
     const username = interaction.options.getString('username');
     const password = interaction.options.getString('password');
 
-    // Retrieve cookies from the interaction options but allow them to be overridden by the username and password
-    let cookies = interaction.options.getString('cookies');
-
     // Return an error if neither the username and password or cookies are provided
     if (!username && !password && !cookies)
         return await interaction.safe_reply({
@@ -47,22 +36,22 @@ export async function on_login_command(interaction) {
             ephemeral: true,
         });
 
-    // Determine id user did not provide cookies, attempt to login with username and password
-    if (!cookies) {
-        // Perform Blackboard login to generate fresh cookies
-        try {
-            cookies = await perform_blackboard_login(username, password);
-        } catch (error) {
-            return await interaction.safe_reply({
-                content:
-                    'The username or password you provided is incorrect. Please try again with your CUNYFirst username and password.',
-                ephemeral: true,
-            });
-        }
+    // Perform Blackboard login to generate fresh token
+    let token;
+    try {
+        token = await perform_blackboard_login(username, password);
+    } catch (error) {
+        console.error(error);
+        return await interaction.safe_reply({
+            content:
+                'The username or password you provided is incorrect. Please try again with your CUNYFirst username and password.',
+            ephemeral: true,
+        });
     }
 
     // Register the client to determine if the cookies are valid
-    const client = await register_client(interaction, cookies);
+    const client = await register_client(interaction, token);
+    console.log('client', client);
     if (!client)
         return interaction.safe_reply({
             ephemeral: true,

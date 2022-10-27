@@ -35,6 +35,10 @@ export function build_assignments_command(builder) {
                     {
                         name: 'Graded Only',
                         value: 'GRADED',
+                    },
+                    {
+                        name: 'Past-Due Only',
+                        value: 'PAST_DUE',
                     }
                 )
         );
@@ -61,30 +65,23 @@ export async function on_assignments_command(interaction) {
     if (!course) throw new Error('NO_COURSE');
 
     // Retrieve the assignments from Blackboard
-    const assignments = await client.get_all_assignments(course);
-
-    // Filter the assignments
-    const filtered = assignments.filter((assignment) => {
-        // Assert the assignment has the specified status
-        if (course_status) return assignment.status === course_status;
-        return true;
-    });
+    const assignments = await client.get_all_assignments(course, course_status);
 
     // Build the embed message
     const embed = {
         title: 'Blackboard Assignments',
         description: `Below are your requested assignments for **${course.name}**`,
-        fields: filtered.length
-            ? filtered.map(({ url, name, status, deadline_at, grade }) => ({
+        fields: assignments.length
+            ? assignments.map(({ name, status, deadline_at, grade }) => ({
                   name: name.substring(0, 256), // Truncate the name to 256 characters to prevent errors from Discord limits
                   value: [
                       `Status: \`${status}\``,
-                      grade ? `Grade: \`${grade.score} / ${grade.possible} - ${grade.percent}%\`` : '',
-                      `Due Date: <t:${Math.floor(deadline_at / 1000)}:R> ${
-                          status === 'UPCOMING' && deadline_at < Date.now() ? ' **(Past Due)**' : ''
-                      }`,
-                      grade && grade.comments ? `Comments:\n> ${grade.comments.split('\n').join('\n> ')}` : '',
-                      url ? `**[[View Assignment]](${client.base}${url})**` : '',
+                      grade?.score
+                          ? `Grade: \`${grade.score} / ${grade.possible} - ${Math.round(
+                                (grade.score / grade.possible) * 100
+                            )}%\``
+                          : '',
+                      `Due Date: <t:${Math.floor(deadline_at / 1000)}:R>`,
                   ]
                       .filter((line) => line.length > 0)
                       .join('\n'),

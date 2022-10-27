@@ -1,11 +1,8 @@
 {
     "type": "module",
     "dependencies": {
-        "cheerio": "^1.0.0-rc.12",
         "discord.js": "^14.4.0",
         "dotenv": "^16.0.2",
-        "fetch-cookie": "^2.1.0",
-        "node-fetch": "^3.2.10",
         "when-time": "^1.0.3"
     }
 }

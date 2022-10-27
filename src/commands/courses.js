@@ -87,7 +87,7 @@ export async function on_courses_command(interaction) {
                 title: 'Blackboard Courses',
                 description: 'Below are some of the courses that are available on your Blackboard account.',
                 fields: Object.keys(courses).map((key) => {
-                    const { id, name, updated_at, urls } = courses[key];
+                    const { id, name, updated_at, url } = courses[key];
                     const ignored = client.ignored('courses', id);
                     return {
                         name: `Course ${key} ${ignored ? `**(Ignored)** ` : ''}`,
@@ -95,7 +95,7 @@ export async function on_courses_command(interaction) {
                             `Name: \`${name}\``,
                             `Last Updated <t:${Math.floor(updated_at / 1000)}:R>`,
                             ignored ? `**This course is currently being ignored.**` : ``,
-                            `**[[View Course]](${client.base}${urls.class})** - **[[View Grades]](${client.base}${urls.grades})**`,
+                            `**[[View Course]](${url})**`,
                         ]
                             .filter((line) => line.length > 0)
                             .join('\n'),

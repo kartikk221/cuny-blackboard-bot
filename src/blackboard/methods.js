@@ -43,10 +43,10 @@ export function get_registered_client(interaction) {
  * Registers a new Blackboard API client with the given credentials from a Discord interaction.
  *
  * @param {import('discord.js').Interaction} interaction A Discord interaction object
- * @param {String} cookies The cookies to use for the client.
+ * @param {String} token The session token for the Blackboard API
  * @returns {Promise<BlackboardClient|void>}
  */
-export async function register_client(interaction, cookies) {
+export async function register_client(interaction, token) {
     // Convert the interaction into an identifier
     const identifier = interaction_to_identifier(interaction);
 
@@ -56,8 +56,11 @@ export async function register_client(interaction, cookies) {
     // Initialize the client to validate the cookies
     let valid = false;
     try {
-        valid = await client.import({ cookies });
-    } catch (error) {}
+        valid = await client.import({ token });
+    } catch (error) {
+        console.error(error);
+    }
+    console.log('valid', valid);
 
     // Ensure the client is valid
     if (!valid) return;
@@ -88,6 +91,7 @@ export async function register_client(interaction, cookies) {
 
     // Bind an "expire" event handler to the client
     client.once('expired', async () => {
+        console.log('expired', client);
         // Send a DM to the user to notify them that the client has expired
         send_direct_message(
             {
