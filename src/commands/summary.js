@@ -83,25 +83,36 @@ export async function generate_summary_embeds(client, type, max_courses_age = In
         if (client.ignored('courses', course.id)) delete courses[id];
     });
 
-    // Determine an assignments filter constant based on the summary type
-    let filter;
-    let full = false;
+    // Determine a filter status for the assignments
+    let status;
+    let min_deadline_at = 0;
+    let max_deadline_at = Infinity;
     switch (type) {
         case SUMMARY_TYPES.UPCOMING_ASSIGNMENTS:
-            filter = 'UPCOMING';
+            status = 'UPCOMING';
+            min_deadline_at = Date.now();
             break;
         case SUMMARY_TYPES.PAST_DUE_ASSIGNMENTS:
-            filter = 'PAST_DUE';
+            status = 'PAST_DUE';
+            max_deadline_at = Date.now();
             break;
         case SUMMARY_TYPES.RECENTLY_GRADED_ASSIGNMENTS:
-            full = true;
-            filter = 'GRADED';
+            status = 'GRADED';
+            max_deadline_at = 1000 * 60 * 60 * 24 * 30; // 30 Days to cut down on search time
             break;
     }
 
     // Retrieve each course's assignments
     const names = Object.keys(courses);
-    const results = await Promise.all(names.map((key) => client.get_all_assignments(courses[key], filter, full)));
+    const results = await Promise.all(
+        names.map((key) =>
+            client.get_all_assignments(courses[key], {
+                status,
+                min_deadline_at,
+                max_deadline_at,
+            })
+        )
+    );
 
     // Convert the resolved array into an object with the course names as keys
     // Filter assignments based on the specified type

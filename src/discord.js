@@ -58,12 +58,14 @@ export async function on_client_interaction(interaction) {
     );
 
     // Inject a respond method into the interaction to simplify the command handlers
+    let replied = false;
     interaction.safe_reply = (response) => {
         // Always make the responses ephemeral
         response.ephemeral = true;
 
         // Ensure the interaction has not already been replied to
-        if (interaction.replied) return;
+        if (replied || interaction.replied) return;
+        replied = true;
 
         // Clear the defer timeout
         clearTimeout(defer_timeout);

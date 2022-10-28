@@ -65,7 +65,17 @@ export async function on_assignments_command(interaction) {
     if (!course) throw new Error('NO_COURSE');
 
     // Retrieve the assignments from Blackboard
-    const assignments = await client.get_all_assignments(course, course_status);
+    const assignments = await client.get_all_assignments(course, {
+        status: course_status,
+    });
+
+    // Sort assignments by closest deadline to current timestamp
+    assignments.sort((a, b) => {
+        const current = Date.now();
+        const a_diff = Math.abs(a.deadline_at - current);
+        const b_diff = Math.abs(b.deadline_at - current);
+        return a_diff - b_diff;
+    });
 
     // Build the embed message
     const embed = {

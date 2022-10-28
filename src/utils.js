@@ -52,22 +52,42 @@ export async function with_retries(amount, delay, operation, onError) {
 
 /**
  * Spreads fields from provided embed JSON over multiple embeds if the numer of fields exceeds the 25 field limit per embed.
- * @param {Object} embed_json
+ * @param {Object} embed
  * @returns {Object[]}
  */
-export function spread_fields_over_embeds(embed_json) {
+export function spread_fields_over_embeds(embed) {
     const results = [];
-    const { fields } = embed_json;
-    if (Array.isArray(fields) && fields.length) {
+    if (Array.isArray(embed.fields) && embed.fields.length) {
+        // Define limits for each embed
         const max_fields = 25;
-        const max_embeds = Math.ceil(fields.length / max_fields);
-        for (let i = 0; i < max_embeds; i++) {
-            const embed = { ...embed_json };
-            embed.fields = fields.slice(i * max_fields, (i + 1) * max_fields);
-            results.push(embed);
+        const max_length = 6000;
+
+        // Begin splitting the embed's fields into multiple embed containers
+        let container = { ...embed };
+        container.fields = [];
+        let container_fields = 0;
+        let container_length = JSON.stringify(container).length;
+        for (let i = 0; i < embed.fields.length; i++) {
+            // Add the field to the current container
+            container.fields.push(embed.fields[i]);
+            container_fields++;
+            container_length += JSON.stringify(embed.fields[i]).length;
+
+            // If the container is full, create a new one
+            if (container_fields >= max_fields || container_length >= max_length) {
+                results.push(container);
+                container = { ...embed };
+                container.fields = [];
+                container_fields = 0;
+                container_length = JSON.stringify(container).length;
+            }
         }
+
+        // Push container to results if we have no results aka. no limits were reached
+        if (!results.length) results.push(container);
     } else {
-        results.push(embed_json);
+        results.push(embed);
     }
+
     return results;
 }

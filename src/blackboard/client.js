@@ -1,6 +1,6 @@
 import * as whenTime from 'when-time';
 import { EventEmitter } from 'events';
-import { with_retries } from '../utils.js';
+import { sleep, with_retries } from '../utils.js';
 import { generate_summary_embeds } from '../commands/summary.js';
 
 export const MAX_KEEP_ALIVE_RETRIES = 5;
@@ -335,15 +335,20 @@ export class BlackboardClient extends EventEmitter {
      * Note! You may use the `get_all_courses()` method to get all course IDs.
      *
      * @param {Course} course The course to get assignments for.
-     * @param {AssignmentStatus} filter The status of the assignments to filter by.
-     * @param {Boolean=} full Whether or not to retrieve full details for each assignment.
-     * @param {Number=} retries The number of times to retry the fetch process.
-     * @param {Number=} delay The delay in milliseconds between each retry.
+     * @param {Object} options The options for fetching assignments.
+     * @param {AssignmentStatus=} options.status The status of the assignments to filter by.
+     * @param {Number=} options.min_deadline_at The minimum deadline timestamp of the assignments to filter by.
+     * @param {Number=} options.max_deadline_at The maximum deadline timestamp of the assignments to filter by.
+     * @param {Number=} options.retries The number of times to retry the fetch process.
+     * @param {Number=} options.delay The delay in milliseconds between each retry.
      * @returns {Promise<Array<SimpleAssignment & AssignmentDetails>>}
      */
-    async get_all_assignments(course, filter, full = false, retries = 5, delay = 1000) {
+    async get_all_assignments(course, options) {
         // Ensure client has been authenticated
         this._ensure_authenticated();
+
+        // Destructure the options
+        const { status, min_deadline_at = 0, max_deadline_at = Infinity, retries = 5, delay = 1000 } = options || {};
 
         // Fetch the assignments from the API
         let assignments = await with_retries(retries, delay, async () => {
@@ -357,44 +362,47 @@ export class BlackboardClient extends EventEmitter {
             return await response.json();
         });
 
-        // Sort the assignments by their deadline
-        assignments.sort((a, b) => a.deadline_at - b.deadline_at);
+        // Filter the assignments by the deadline timestamp range
+        assignments = assignments.filter(
+            ({ deadline_at }) => deadline_at >= min_deadline_at && deadline_at <= max_deadline_at
+        );
 
-        // Fill the appropriate status of each assignment
-        // Queue up to 5 concurrent requests to fetch the full details of each assignment
-        let queue = [];
+        // Retrieve further details for each assignment if neccessary up to 5 at a time
+        const concurrent_limit = 5;
+        const concurrent_items = [];
+        const requires_specifics = !(status && !['SUBMITTED', 'PAST_DUE'].includes(status));
         for (let i = 0; i < assignments.length; i++) {
-            // Wrap the async function in a promise
-            const promise = (async () => {
-                const assignment = assignments[i];
+            const assignment = assignments[i];
 
-                // Determine if the assignment is graded
-                if (!full && assignment.grade.score !== null) {
-                    assignment.status = 'GRADED';
-                } else if (full || assignment.deadline_at < Date.now()) {
-                    // Do not fetch the past assignment details if the filter does not require it
-                    if (!full && filter && !['SUBMITTED', 'PAST_DUE'].includes(filter)) return assignment;
+            // Determine if the assignment is already graded
+            if (assignment.grade.score !== null) {
+                assignment.status = 'GRADED';
+            } else if (requires_specifics && assignment.deadline_at < Date.now()) {
+                // Begin fetching the specific details for the assignment
+                const promise = this.get_specific_assignment(course, assignment);
 
-                    // Fetch further details about the assignment
-                    assignments[i] = await this.get_specific_assignment(course, assignment);
-                } else {
-                    // Mark the assignment as upcoming
-                    assignment.status = 'UPCOMING';
+                // Bind the resolver to override the assignment
+                promise.then((specific) => (assignments[i] = specific));
+
+                // Add the promise to the concurrent items
+                concurrent_items.push(promise);
+
+                // Wait for the concurrent items to finish if the limit has been reached
+                if (concurrent_items.length >= concurrent_limit) {
+                    await Promise.all(concurrent_items);
+
+                    // Flush the concurrent items
+                    concurrent_items.length = 0;
                 }
-            })();
-
-            // Add the promise to the queue
-            queue.push(promise);
-
-            // Wait for the queue to finish and flush it
-            if (queue.length >= 5) {
-                await Promise.all(queue);
-                queue = [];
+            } else {
+                // Mark the assignment as upcoming
+                // While this is not fully true, it is the best we can do without fetching further details
+                assignment.status = 'UPCOMING';
             }
         }
 
-        // Filter the assignments by the filter
-        if (filter) assignments = assignments.filter((assignment) => assignment.status === filter);
+        // Wait for the concurrent items to finish if there are any remaining
+        if (concurrent_items.length) await Promise.all(concurrent_items);
 
         // Return the simple assignments
         return assignments;
