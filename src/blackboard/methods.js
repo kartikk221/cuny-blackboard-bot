@@ -60,7 +60,6 @@ export async function register_client(interaction, token) {
     } catch (error) {
         console.error(error);
     }
-    console.log('valid', valid);
 
     // Ensure the client is valid
     if (!valid) return;
@@ -91,7 +90,6 @@ export async function register_client(interaction, token) {
 
     // Bind an "expire" event handler to the client
     client.once('expired', async () => {
-        console.log('expired', client);
         // Send a DM to the user to notify them that the client has expired
         send_direct_message(
             {

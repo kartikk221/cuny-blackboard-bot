@@ -83,9 +83,25 @@ export async function generate_summary_embeds(client, type, max_courses_age = In
         if (client.ignored('courses', course.id)) delete courses[id];
     });
 
+    // Determine an assignments filter constant based on the summary type
+    let filter;
+    let full = false;
+    switch (type) {
+        case SUMMARY_TYPES.UPCOMING_ASSIGNMENTS:
+            filter = 'UPCOMING';
+            break;
+        case SUMMARY_TYPES.PAST_DUE_ASSIGNMENTS:
+            filter = 'PAST_DUE';
+            break;
+        case SUMMARY_TYPES.RECENTLY_GRADED_ASSIGNMENTS:
+            full = true;
+            filter = 'GRADED';
+            break;
+    }
+
     // Retrieve each course's assignments
     const names = Object.keys(courses);
-    const results = await Promise.all(names.map((key) => client.get_all_assignments(courses[key])));
+    const results = await Promise.all(names.map((key) => client.get_all_assignments(courses[key], filter, full)));
 
     // Convert the resolved array into an object with the course names as keys
     // Filter assignments based on the specified type
@@ -111,7 +127,7 @@ export async function generate_summary_embeds(client, type, max_courses_age = In
                     case SUMMARY_TYPES.RECENTLY_GRADED_ASSIGNMENTS:
                         // Ensure the assignment has been graded
                         // Ensure the assignment was last updated within the last 24 hours
-                        return status === 'GRADED' && Date.now() - updated_at < 1000 * 60 * 60 * 24;
+                        return status === 'GRADED' && Date.now() - updated_at < 1000 * 60 * 60 * 24 * 7;
                 }
             })
             .map((assignment) => {
@@ -181,13 +197,14 @@ export async function generate_summary_embeds(client, type, max_courses_age = In
     return spread_fields_over_embeds({
         title: type,
         description,
-        fields: assignments.slice(0, 10).map(({ url, name, course, deadline_at, grade }) => ({
+        fields: assignments.slice(0, 10).map(({ name, course, deadline_at, grade }) => ({
             name,
             value: [
-                grade ? `Grade: \`${grade.score} / ${grade.possible} - ${grade.percent}%\`` : '',
+                grade?.score
+                    ? `Grade: \`${grade.score} / ${grade.possible} - ${Math.round(grade.score / grade.possible)}%\``
+                    : '',
                 `Deadline: <t:${Math.floor(deadline_at / 1000)}:R>`,
-                grade && grade.comments ? `Comments:\n> ${grade.comments.split('\n').join('\n> ')}` : '',
-                `**[[View Course]](${client.base}${course.urls.class})** - **[[View Assignment]](${client.base}${url})**`,
+                `**[[View Course]](${course.url})**`,
             ]
                 .filter((line) => line.length > 0)
                 .join('\n'),

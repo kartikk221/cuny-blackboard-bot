@@ -51,7 +51,6 @@ export async function on_login_command(interaction) {
 
     // Register the client to determine if the cookies are valid
     const client = await register_client(interaction, token);
-    console.log('client', client);
     if (!client)
         return interaction.safe_reply({
             ephemeral: true,

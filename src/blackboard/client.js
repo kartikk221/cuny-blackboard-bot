@@ -336,11 +336,12 @@ export class BlackboardClient extends EventEmitter {
      *
      * @param {Course} course The course to get assignments for.
      * @param {AssignmentStatus} filter The status of the assignments to filter by.
+     * @param {Boolean=} full Whether or not to retrieve full details for each assignment.
      * @param {Number=} retries The number of times to retry the fetch process.
      * @param {Number=} delay The delay in milliseconds between each retry.
-     * @returns {Promise<Array<SimpleAssignment>>}
+     * @returns {Promise<Array<SimpleAssignment & AssignmentDetails>>}
      */
-    async get_all_assignments(course, filter, retries = 5, delay = 1000) {
+    async get_all_assignments(course, filter, full = false, retries = 5, delay = 1000) {
         // Ensure client has been authenticated
         this._ensure_authenticated();
 
@@ -368,11 +369,11 @@ export class BlackboardClient extends EventEmitter {
                 const assignment = assignments[i];
 
                 // Determine if the assignment is graded
-                if (assignment.grade.score !== null) {
+                if (!full && assignment.grade.score !== null) {
                     assignment.status = 'GRADED';
-                } else if (assignment.deadline_at < Date.now()) {
+                } else if (full || assignment.deadline_at < Date.now()) {
                     // Do not fetch the past assignment details if the filter does not require it
-                    if (filter && !['SUBMITTED', 'PAST_DUE'].includes(filter)) return assignment;
+                    if (!full && filter && !['SUBMITTED', 'PAST_DUE'].includes(filter)) return assignment;
 
                     // Fetch further details about the assignment
                     assignments[i] = await this.get_specific_assignment(course, assignment);
