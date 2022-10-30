@@ -337,6 +337,7 @@ export class BlackboardClient extends EventEmitter {
      * @param {Course} course The course to get assignments for.
      * @param {Object} options The options for fetching assignments.
      * @param {AssignmentStatus=} options.status The status of the assignments to filter by.
+     * @param {Boolean=} options.detailed Whether or not to fetch detailed information for each assignment.
      * @param {Number=} options.min_deadline_at The minimum deadline timestamp of the assignments to filter by.
      * @param {Number=} options.max_deadline_at The maximum deadline timestamp of the assignments to filter by.
      * @param {Number=} options.retries The number of times to retry the fetch process.
@@ -348,7 +349,14 @@ export class BlackboardClient extends EventEmitter {
         this._ensure_authenticated();
 
         // Destructure the options
-        const { status, min_deadline_at = 0, max_deadline_at = Infinity, retries = 5, delay = 1000 } = options || {};
+        const {
+            status,
+            detailed = false,
+            min_deadline_at = 0,
+            max_deadline_at = Infinity,
+            retries = 5,
+            delay = 1000,
+        } = options || {};
 
         // Fetch the assignments from the API
         let assignments = await with_retries(retries, delay, async () => {
@@ -377,7 +385,7 @@ export class BlackboardClient extends EventEmitter {
             // Determine if the assignment is already graded
             if (assignment.grade.score !== null) {
                 assignment.status = 'GRADED';
-            } else if (requires_specifics && assignment.deadline_at < Date.now()) {
+            } else if (detailed || (requires_specifics && assignment.deadline_at < Date.now())) {
                 // Begin fetching the specific details for the assignment
                 const promise = this.get_specific_assignment(course, assignment);
 
