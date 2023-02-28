@@ -47,34 +47,43 @@ export async function on_client_interaction(interaction) {
     if (interaction.commandName !== process.env['COMMAND_PREFIX'].replace('/', '')) return;
 
     // Set a timeout to defer the interaction if no response is sent within 2 seconds
-    const defer_timeout = setTimeout(
-        () =>
-            !interaction.deferred
-                ? interaction.deferReply({
-                      ephemeral: true,
-                  })
-                : null,
-        2000
-    );
+    let replied = false;
+    let deferred = false;
+    const defer_timeout = setTimeout(() => {
+        // If the interaction has not been replied to, defer it
+        if (!replied) {
+            deferred = interaction.deferReply({
+                ephemeral: true,
+            });
+        }
+    }, 2000);
 
     // Inject a respond method into the interaction to simplify the command handlers
-    let replied = false;
-    interaction.safe_reply = (response) => {
-        // Always make the responses ephemeral
-        response.ephemeral = true;
-
-        // Ensure the interaction has not already been replied to
-        if (replied || interaction.replied) return;
+    interaction.safe_reply = async (response) => {
+        // Ensure we have not replied to the interaction yet
+        if (replied) return;
         replied = true;
 
-        // Clear the defer timeout
-        clearTimeout(defer_timeout);
+        // Check if the interaction has been deferred
+        if (deferred) {
+            // Wait for the interaction to be deferred
+            await deferred;
 
-        // Follow up with the interaction if it has been deferred
-        if (interaction.deferred) return interaction.followUp(response);
+            // Follow up with the interaction if it has been deferred
+            return interaction.followUp({
+                ...response,
+                ephemeral: true,
+            });
+        } else {
+            // Clear the defer timeout
+            clearTimeout(defer_timeout);
 
-        // Reply to the interaction
-        return interaction.reply(response);
+            // Reply to the interaction
+            return interaction.reply({
+                ...response,
+                ephemeral: true,
+            });
+        }
     };
 
     try {

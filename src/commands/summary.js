@@ -91,7 +91,7 @@ export async function generate_summary_embeds(client, type, max_courses_age = In
         case SUMMARY_TYPES.UPCOMING_ASSIGNMENTS:
             status = 'UPCOMING';
             min_deadline_at = Date.now();
-            max_deadline_at = 1000 * 60 * 60 * 24 * 30; // 30 Days to cut down on search time
+            max_deadline_at = Date.now() + 1000 * 60 * 60 * 24 * 30; // 30 Days to cut down on search time
             break;
         case SUMMARY_TYPES.PAST_DUE_ASSIGNMENTS:
             status = 'PAST_DUE';
@@ -99,7 +99,7 @@ export async function generate_summary_embeds(client, type, max_courses_age = In
             break;
         case SUMMARY_TYPES.RECENTLY_GRADED_ASSIGNMENTS:
             status = 'GRADED';
-            max_deadline_at = 1000 * 60 * 60 * 24 * 30; // 30 Days to cut down on search time
+            max_deadline_at = Date.now() + 1000 * 60 * 60 * 24 * 30; // 30 Days to cut down on search time
             break;
     }
 
