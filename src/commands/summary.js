@@ -120,37 +120,55 @@ export async function generate_summary_embeds(client, type, max_courses_age = In
     // Filter assignments based on the specified type
     const assignments = [];
     for (let i = 0; i < names.length; i++) {
-        // Filter the assignments based on the specified type
-        const filtered = results[i]
-            .filter(({ status, deadline_at, updated_at }) => {
-                switch (type) {
-                    case SUMMARY_TYPES.UPCOMING_ASSIGNMENTS:
-                        // Filter out assignments that are not upcoming
-                        // Filter out assignments whose due date is in the past
-                        return status === 'UPCOMING' && deadline_at > Date.now();
-                    case SUMMARY_TYPES.PAST_DUE_ASSIGNMENTS:
-                        // Filter out assignments that are not upcoming
-                        // Filter out assignments whose due date is in the future
-                        // Filter out assignments that are older than 30 days
-                        return (
-                            status === 'UPCOMING' &&
-                            deadline_at < Date.now() &&
-                            Date.now() - deadline_at < 1000 * 60 * 60 * 24 * 30
-                        );
-                    case SUMMARY_TYPES.RECENTLY_GRADED_ASSIGNMENTS:
-                        // Ensure the assignment has been graded
-                        // Ensure the assignment was last updated within the last 24 hours
-                        return status === 'GRADED' && Date.now() - updated_at < 1000 * 60 * 60 * 24 * 7;
-                }
-            })
-            .map((assignment) => {
-                // Include the course object in the assignment
-                assignment.course = courses[names[i]];
-                return assignment;
-            });
+        // Check if assignments.scores were cached for this course
+        const course = courses[names[i]];
+        const identifier = `assignments.scores.${course.id}`;
+        const cached_scores = client.get_from_cache(identifier, names[i]);
+        if (cached_scores) {
+            // Filter the assignments based on the specified type
+            const filtered = results[i]
+                .filter(({ id, status, deadline_at, grade: { score } }) => {
+                    switch (type) {
+                        case SUMMARY_TYPES.UPCOMING_ASSIGNMENTS:
+                            // Filter out assignments that are not upcoming
+                            // Filter out assignments whose due date is in the past
+                            return status === 'UPCOMING' && deadline_at > Date.now();
+                        case SUMMARY_TYPES.PAST_DUE_ASSIGNMENTS:
+                            // Filter out assignments that are not upcoming
+                            // Filter out assignments whose due date is in the future
+                            // Filter out assignments that are older than 30 days
+                            return (
+                                status === 'UPCOMING' &&
+                                deadline_at < Date.now() &&
+                                Date.now() - deadline_at < 1000 * 60 * 60 * 24 * 30
+                            );
+                        case SUMMARY_TYPES.RECENTLY_GRADED_ASSIGNMENTS:
+                            // Ensure the assignment has been graded
+                            // Ensure the assignment score is different from cached score
+                            const cached_score = cached_scores[id];
+                            return status === 'GRADED' && (!cached_score || cached_score !== score);
+                    }
+                })
+                .map((assignment) => {
+                    // Include the course object in the assignment
+                    assignment.course = courses[names[i]];
+                    return assignment;
+                });
 
-        // Add the assignments to the array
-        assignments.push(...filtered);
+            // If there are some assignments, update the cache
+            if (filtered.length) {
+                filtered.forEach(({ id, grade: { score } }) => (cached_scores[id] = score));
+                client.set_in_cache(identifier, cached_scores, 1000 * 60 * 60 * 24 * 30 * 6); // 6 Months cache time
+            }
+
+            // Add the assignments to the array
+            assignments.push(...filtered);
+        } else {
+            // Cache the assignments.scores for this course
+            const assignment_scores = {};
+            results[i].forEach(({ id, grade: { score } }) => (assignment_scores[id] = score));
+            client.set_in_cache(identifier, assignment_scores, 1000 * 60 * 60 * 24 * 30 * 6); // 6 Months cache time
+        }
     }
 
     // Sort the assignments

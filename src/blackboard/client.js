@@ -1,6 +1,6 @@
 import * as whenTime from 'when-time';
 import { EventEmitter } from 'events';
-import { sleep, with_retries } from '../utils.js';
+import { with_retries } from '../utils.js';
 import { generate_summary_embeds } from '../commands/summary.js';
 
 export const MAX_KEEP_ALIVE_RETRIES = 5;
@@ -20,6 +20,7 @@ export class BlackboardClient extends EventEmitter {
         token: null,
         ignore: {},
         alerts: {},
+        cache: {},
     };
 
     /**
@@ -166,6 +167,17 @@ export class BlackboardClient extends EventEmitter {
             this.#client.token = null;
         }
 
+        // Sanitize the cache to remove any expired data
+        let should_persist = false;
+        Object.keys(this.#client.cache).forEach((key) => {
+            const { expires_at } = this.#client.cache[key];
+            if (expires_at < Date.now()) {
+                should_persist = true;
+                delete this.#client.cache[key];
+            }
+        });
+        if (should_persist) this.emit('persist');
+
         // Return a Boolean based on a valid user name was found
         return is_logged_in;
     }
@@ -241,6 +253,44 @@ export class BlackboardClient extends EventEmitter {
             return true;
         } else {
             return false;
+        }
+    }
+
+    /**
+     * Sets a value in the cache with an expiration time.
+     * @param {string} key
+     * @param {any} value
+     * @param {number=} expires_in_ms Expires in milliseconds.
+     */
+    set_in_cache(key, value, expires_in_ms = 1000 * 60 * 60 * 24 * 30) {
+        // Set the value in the cache
+        this.#client.cache[key] = {
+            value,
+            expires_at: Date.now() + expires_in_ms,
+        };
+
+        // Emit a 'persist' event
+        this.emit('persist');
+    }
+
+    /**
+     * Returns a value from the cache if it exists and has not expired.
+     * @param {string} key
+     * @returns {any}
+     */
+    get_from_cache(key) {
+        // Get the value from the cache
+        const { value, expires_at } = this.#client.cache[key] || {};
+
+        // Return the value if it exists and has not expired
+        if (value && expires_at > Date.now()) {
+            return value;
+        } else if (expires_at < Date.now()) {
+            // Delete the value from the cache
+            delete this.#client.cache[key];
+
+            // Emit a 'persist' event
+            this.emit('persist');
         }
     }
 

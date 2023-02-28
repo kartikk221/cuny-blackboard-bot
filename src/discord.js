@@ -56,7 +56,7 @@ export async function on_client_interaction(interaction) {
                 ephemeral: true,
             });
         }
-    }, 2000);
+    }, 500);
 
     // Inject a respond method into the interaction to simplify the command handlers
     interaction.safe_reply = async (response) => {
@@ -70,7 +70,7 @@ export async function on_client_interaction(interaction) {
             await deferred;
 
             // Follow up with the interaction if it has been deferred
-            return interaction.followUp({
+            return interaction.editReply({
                 ...response,
                 ephemeral: true,
             });
